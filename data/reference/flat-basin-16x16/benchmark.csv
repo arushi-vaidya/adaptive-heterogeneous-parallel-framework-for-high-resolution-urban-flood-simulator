@@ -1,0 +1,2 @@
+cells,steps,preprocessing_seconds,solver_seconds,output_seconds,total_seconds
+256,6,3.792e-06,0.000129417,0.00070675,0.000839959

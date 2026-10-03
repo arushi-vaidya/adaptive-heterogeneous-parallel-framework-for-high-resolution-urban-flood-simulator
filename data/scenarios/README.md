@@ -1,0 +1,1 @@
+The five deterministic built-in benchmarks are selected with `--scenario`: `flat-basin`, `slope`, `dam-break`, `rain-drain`, and `wet-dry`. Their initial states, rainfall, boundary selection, and duration are defined in `src/simulation/Scenarios.cpp`.

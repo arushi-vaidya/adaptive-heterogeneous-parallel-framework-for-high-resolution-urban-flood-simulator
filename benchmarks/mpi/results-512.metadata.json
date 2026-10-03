@@ -1,0 +1,48 @@
+{
+  "started_at_utc": "2026-10-03T11:47:32.219562+00:00",
+  "finished_at_utc": "2026-10-03T11:48:14.353201+00:00",
+  "binary": "/Users/arushivaidya/Desktop/College/sem 7/PAGP/Lab/EL/build-mpi/flood_sim",
+  "compiler": "/usr/bin/c++",
+  "compiler_version": "Apple clang version 16.0.0 (clang-1600.0.26.6)",
+  "operating_system": "macOS-26.6.2-arm64-arm-64bit",
+  "cpu": "Apple M2",
+  "logical_cpu_count": 8,
+  "scenarios": [
+    "flat-basin",
+    "slope",
+    "dam-break",
+    "rain-drain",
+    "wet-dry"
+  ],
+  "grid_sizes": [
+    "512x512"
+  ],
+  "thread_counts": [
+    1,
+    2,
+    4,
+    8,
+    16
+  ],
+  "repetitions": 3,
+  "process_counts": [
+    1,
+    2,
+    4
+  ],
+  "mpi_launcher": "/opt/homebrew/bin/mpiexec",
+  "requested_backends": [
+    "mpi"
+  ],
+  "availability": [
+    {
+      "backend": "mpi",
+      "status": "AVAILABLE",
+      "implemented": true,
+      "detail": "MPI solver is compiled"
+    }
+  ],
+  "depth_tolerance_m": 1e-08,
+  "momentum_tolerance_m2_s": 1e-08,
+  "conservation_tolerance_m3": 1e-08
+}

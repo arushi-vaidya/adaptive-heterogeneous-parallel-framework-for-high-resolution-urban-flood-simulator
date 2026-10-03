@@ -1,0 +1,2 @@
+time_s,steps,stored_m3,rainfall_m3,outflow_m3,infiltration_m3,mass_residual_m3,max_depth_m,max_velocity_m_s,wet_cells,flooded_area_m2,solver_seconds
+60,6,3.2,3.2,0,0,-1.1990408666e-14,0.0005,0,256,6400,0.000129417

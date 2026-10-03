@@ -1,0 +1,20 @@
+{
+  "result_file": "results-512.csv",
+  "sha256": "37c6eea7f438def81bcd3335e54900b2455483c40307cb3b74c35c2afd85b085",
+  "metadata_completeness": "partial; metadata reconstructed only from recorded rows and build/session evidence",
+  "started_at_utc": null,
+  "finished_at_utc": null,
+  "timestamp_note": "Original CSV did not capture wall-clock timestamps; exact run date/time cannot be recovered.",
+  "operating_system": "macOS 26.6.2 arm64",
+  "cpu": "Apple M2; 8 logical CPU cores reported",
+  "compiler": "/usr/bin/c++",
+  "compiler_version": "Apple clang version 16.0.0 (clang-1600.0.26.6)",
+  "backend": "openmp",
+  "scenarios": ["flat-basin", "slope", "dam-break", "rain-drain", "wet-dry"],
+  "grid_sizes": ["512x512"],
+  "thread_counts": [1, 2, 4, 8, 16],
+  "repetitions_per_configuration": 2,
+  "row_count": 25,
+  "all_rows_passed_recorded_depth_momentum_conservation_gates": true,
+  "notes": "Original results-512.csv preserved byte-for-byte. Runtime values are host-specific. Exact per-process peak memory and invocation timestamps were not recorded in this legacy dataset."
+}

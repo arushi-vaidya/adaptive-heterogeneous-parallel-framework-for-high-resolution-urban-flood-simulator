@@ -1,0 +1,49 @@
+{
+  "started_at_utc": "2026-10-01T15:22:34.408413+00:00",
+  "finished_at_utc": "2026-10-01T15:22:48.296534+00:00",
+  "binary": "/Users/arushivaidya/Desktop/College/sem 7/PAGP/Lab/EL/build/flood_sim",
+  "compiler": "/usr/bin/c++",
+  "compiler_version": "Apple clang version 16.0.0 (clang-1600.0.26.6)",
+  "operating_system": "macOS-26.6.2-arm64-arm-64bit",
+  "cpu": "Apple M2",
+  "logical_cpu_count": 8,
+  "scenarios": [
+    "flat-basin"
+  ],
+  "grid_sizes": [
+    "1024x1024",
+    "2048x2048"
+  ],
+  "thread_counts": [
+    4
+  ],
+  "repetitions": 1,
+  "requested_backends": [
+    "serial",
+    "openmp",
+    "mpi"
+  ],
+  "availability": [
+    {
+      "backend": "serial",
+      "status": "AVAILABLE",
+      "implemented": true,
+      "detail": "serial reference solver is compiled"
+    },
+    {
+      "backend": "openmp",
+      "status": "AVAILABLE",
+      "implemented": true,
+      "detail": "OpenMP solver is compiled"
+    },
+    {
+      "backend": "mpi",
+      "status": "UNAVAILABLE",
+      "implemented": true,
+      "detail": "MPI solver source exists but MPI compiler/runtime is unavailable"
+    }
+  ],
+  "depth_tolerance_m": 1e-08,
+  "momentum_tolerance_m2_s": 1e-08,
+  "conservation_tolerance_m3": 1e-08
+}

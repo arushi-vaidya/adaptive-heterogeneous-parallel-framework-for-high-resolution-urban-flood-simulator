@@ -1,0 +1,1 @@
+Terrain inputs are rectangular CSV files containing elevation in metres, one row per grid row and one cell per comma-separated column. Cell dimensions are supplied separately with `--cell-size`.

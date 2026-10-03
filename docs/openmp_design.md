@@ -1,0 +1,11 @@
+# OpenMP Backend
+
+Status: implemented and validated against the serial reference on Apple M2 with Apple Clang plus Homebrew `libomp`.
+
+`OpenMPSolver` dispatches to the same timestep implementation as `SerialSolver`, with parallel execution enabled. The solver equations, face Rusanov flux, hydrostatic corrections, source terms, and CFL formula are shared; the serial entry point remains serial. `--backend openmp --threads N` sets the OpenMP thread count. A value of zero in the API uses the runtime maximum.
+
+The CFL scan uses a max reduction. Each independent X/Y face owns one `FaceFlux` record. Per-cell outgoing water is gathered from its left/right and low/high face records, in fixed order; this avoids atomics. The positivity limiter is cell-owned. Flux divergence gathers the four incident fluxes into one cell-owned delta rather than scattering writes from faces. The update/source loop writes only its own cell; infiltration volumes are folded serially in cell order so statistics remain reproducible. Implicit barriers between these loops are required because each stage consumes the preceding stage's complete arrays.
+
+Numerical parity is tested over all five scenarios at 1, 2, 4, 8, and 16 threads. The comparison tolerance is `FLOOD_NUMERICAL_TOLERANCE` (default `1e-8` m). On the 16x16 correctness runs, maximum depth and velocity errors were zero. This establishes parity for those tests, not general numerical correctness.
+
+Actual release-build 512x512 benchmark results are in `benchmarks/openmp/results-512.csv`; 64x64/128x128 runs are in `benchmarks/openmp/results.csv`. Both datasets use two repetitions and record medians. Across the five 512x512 scenarios, mean speedup was 1.015x, 1.522x, 1.944x, 2.019x, and 1.757x at 1, 2, 4, 8, and 16 threads respectively. Depth and momentum errors were zero; the conservation gate passed for all rows. These are host-specific measurements, and oversubscribing this 8-core machine did not consistently help. See the CSV for individual results and errors.
