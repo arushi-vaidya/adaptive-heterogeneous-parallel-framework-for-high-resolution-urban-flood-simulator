@@ -242,9 +242,29 @@ Mesh buildMesh(AdaptiveGrid& grid) {
     return mesh;
 }
 
+std::vector<std::vector<std::size_t>> facesByCell(const Mesh& mesh) {
+    std::vector<std::vector<std::size_t>> result(mesh.cells.size());
+    for (std::size_t faceIndex = 0; faceIndex < mesh.faces.size(); ++faceIndex) {
+        const FaceSegment& face = mesh.faces[faceIndex];
+        if (face.left != noCell) result[face.left].push_back(faceIndex);
+        if (face.right != noCell) result[face.right].push_back(faceIndex);
+    }
+    return result;
+}
+
 void applyBoundaryAndComputeFluxes(Mesh& mesh, BoundaryCondition boundary,
-                                   double gravity, double dryDepth) {
-    for (FaceSegment& face : mesh.faces) {
+                                   double gravity, double dryDepth,
+                                   bool useOpenMP, int openMPThreads) {
+#ifndef FLOOD_HAS_OPENMP
+    (void)useOpenMP;
+    (void)openMPThreads;
+#endif
+#ifdef FLOOD_HAS_OPENMP
+    #pragma omp parallel for schedule(static) num_threads(openMPThreads) if(useOpenMP)
+#endif
+    for (std::ptrdiff_t faceIndex = 0;
+         faceIndex < static_cast<std::ptrdiff_t>(mesh.faces.size()); ++faceIndex) {
+        FaceSegment& face = mesh.faces[static_cast<std::size_t>(faceIndex)];
         const Cell* leftCell = face.left == noCell ? nullptr : mesh.cells[face.left].state;
         const Cell* rightCell = face.right == noCell ? nullptr : mesh.cells[face.right].state;
         Cell leftGhost, rightGhost;
@@ -407,6 +427,20 @@ AdaptiveSolver::AdaptiveSolver(AdaptiveSolverOptions options) : options_(options
 
 AdaptiveDiagnostics AdaptiveSolver::run(AdaptiveGrid& grid, const Rainfall& rainfall,
                                         const SolverConfig& config) const {
+    return runImpl(grid, rainfall, config, false, 1);
+}
+
+AdaptiveDiagnostics AdaptiveSolver::runImpl(AdaptiveGrid& grid,
+                                            const Rainfall& rainfall,
+                                            const SolverConfig& config,
+                                            bool useOpenMP,
+                                            int openMPThreads) const {
+#ifndef FLOOD_HAS_OPENMP
+    (void)openMPThreads;
+    if (useOpenMP)
+        throw std::runtime_error(
+            "Adaptive OpenMP backend is unavailable; configure with FLOOD_ENABLE_OPENMP=ON");
+#endif
     validateConfig(config, options_, grid);
     const auto runtimeStart = std::chrono::steady_clock::now();
     AdaptiveDiagnostics diagnostics;
@@ -428,8 +462,15 @@ AdaptiveDiagnostics AdaptiveSolver::run(AdaptiveGrid& grid, const Rainfall& rain
     while (time < config.endTime) {
         const auto computeStart = std::chrono::steady_clock::now();
         Mesh mesh = buildMesh(grid);
+        const auto cellFaces = facesByCell(mesh);
         double maximumRate = 0.0;
-        for (const CellRef& cell : mesh.cells) {
+        const auto cellCount = static_cast<std::ptrdiff_t>(mesh.cells.size());
+#ifdef FLOOD_HAS_OPENMP
+        #pragma omp parallel for reduction(max:maximumRate) schedule(static) \
+            num_threads(openMPThreads) if(useOpenMP)
+#endif
+        for (std::ptrdiff_t cellIndex = 0; cellIndex < cellCount; ++cellIndex) {
+            const CellRef& cell = mesh.cells[static_cast<std::size_t>(cellIndex)];
             const Cell& state = *cell.state;
             if (state.h <= config.dryDepth) continue;
             const double u = state.hu / state.h;
@@ -445,30 +486,51 @@ AdaptiveDiagnostics AdaptiveSolver::run(AdaptiveGrid& grid, const Rainfall& rain
         if (!(dt > 0.0) || !std::isfinite(dt))
             throw std::runtime_error("Adaptive CFL timestep became invalid");
 
-        applyBoundaryAndComputeFluxes(mesh, config.boundary, config.gravity, config.dryDepth);
+        applyBoundaryAndComputeFluxes(mesh, config.boundary, config.gravity,
+                                      config.dryDepth, useOpenMP, openMPThreads);
         std::vector<double> outgoing(mesh.cells.size(), 0.0);
-        for (const FaceSegment& face : mesh.faces) {
-            if (face.flux.donor != noCell)
-                outgoing[face.flux.donor] += std::abs(face.flux.massRate) * face.length;
+#ifdef FLOOD_HAS_OPENMP
+        #pragma omp parallel for schedule(static) num_threads(openMPThreads) if(useOpenMP)
+#endif
+        for (std::ptrdiff_t cellIndex = 0; cellIndex < cellCount; ++cellIndex) {
+            const std::size_t index = static_cast<std::size_t>(cellIndex);
+            if (useOpenMP) {
+                for (const std::size_t faceIndex : cellFaces[index]) {
+                    const FaceSegment& face = mesh.faces[faceIndex];
+                    if (face.flux.donor == index)
+                        outgoing[index] += std::abs(face.flux.massRate) * face.length;
+                }
+            } else {
+                for (const FaceSegment& face : mesh.faces) {
+                    if (face.flux.donor == index)
+                        outgoing[index] += std::abs(face.flux.massRate) * face.length;
+                }
+            }
         }
         std::vector<double> limiter(mesh.cells.size(), 1.0);
-        for (std::size_t index = 0; index < mesh.cells.size(); ++index) {
+#ifdef FLOOD_HAS_OPENMP
+        #pragma omp parallel for schedule(static) num_threads(openMPThreads) if(useOpenMP)
+#endif
+        for (std::ptrdiff_t cellIndex = 0; cellIndex < cellCount; ++cellIndex) {
+            const std::size_t index = static_cast<std::size_t>(cellIndex);
             const double available = mesh.cells[index].state->h * mesh.cells[index].area;
             if (outgoing[index] * dt > available && outgoing[index] > 0.0)
                 limiter[index] = available / (outgoing[index] * dt);
         }
 
         std::vector<State> delta(mesh.cells.size(), State{0.0, 0.0, 0.0});
+        std::vector<double> infiltrationByCell(mesh.cells.size(), 0.0);
+        std::vector<unsigned char> invalidState(mesh.cells.size(), 0);
         for (const FaceSegment& face : mesh.faces) {
             const double scale = face.flux.donor == noCell ? 1.0 :
                                  limiter[face.flux.donor];
-            if (face.left != noCell) {
+            if (!useOpenMP && face.left != noCell) {
                 for (std::size_t component = 0; component < 3; ++component)
                     delta[face.left][component] -= scale *
                         face.flux.leftFlux[component] * face.length /
                         mesh.cells[face.left].area;
             }
-            if (face.right != noCell) {
+            if (!useOpenMP && face.right != noCell) {
                 for (std::size_t component = 0; component < 3; ++component)
                     delta[face.right][component] += scale *
                         face.flux.rightFlux[component] * face.length /
@@ -498,20 +560,43 @@ AdaptiveDiagnostics AdaptiveSolver::run(AdaptiveGrid& grid, const Rainfall& rain
 
         const double rainRate = rainfall.metersPerSecond(time);
         rainfallVolume.add(rainRate * mesh.areaSum * dt);
-        for (std::size_t index = 0; index < mesh.cells.size(); ++index) {
+#ifdef FLOOD_HAS_OPENMP
+        #pragma omp parallel for schedule(static) num_threads(openMPThreads) if(useOpenMP)
+#endif
+        for (std::ptrdiff_t cellIndex = 0; cellIndex < cellCount; ++cellIndex) {
+            const std::size_t index = static_cast<std::size_t>(cellIndex);
+            if (useOpenMP) {
+                for (const std::size_t faceIndex : cellFaces[index]) {
+                    const FaceSegment& face = mesh.faces[faceIndex];
+                    const double scale = face.flux.donor == noCell ? 1.0 :
+                                         limiter[face.flux.donor];
+                    if (face.left == index) {
+                        for (std::size_t component = 0; component < 3; ++component)
+                            delta[index][component] -= scale *
+                                face.flux.leftFlux[component] * face.length /
+                                mesh.cells[index].area;
+                    } else if (face.right == index) {
+                        for (std::size_t component = 0; component < 3; ++component)
+                            delta[index][component] += scale *
+                                face.flux.rightFlux[component] * face.length /
+                                mesh.cells[index].area;
+                    }
+                }
+            }
             Cell& cell = *mesh.cells[index].state;
             cell.h += dt * (delta[index][0] + rainRate);
             cell.hu += dt * delta[index][1];
             cell.hv += dt * delta[index][2];
             if (cell.h < 0.0 && cell.h > -1e-12) cell.h = 0.0;
             if (cell.h < 0.0 || !std::isfinite(cell.h) ||
-                !std::isfinite(cell.hu) || !std::isfinite(cell.hv))
-                throw std::runtime_error(
-                    "Adaptive timestep produced an invalid state; simulation stopped");
+                !std::isfinite(cell.hu) || !std::isfinite(cell.hv)) {
+                invalidState[index] = 1;
+                continue;
+            }
             const double infiltrated = std::min(
                 cell.h, config.infiltrationMetersPerSecond * dt);
             cell.h -= infiltrated;
-            infiltrationVolume.add(infiltrated * mesh.cells[index].area);
+            infiltrationByCell[index] = infiltrated * mesh.cells[index].area;
             if (cell.h <= config.dryDepth) {
                 cell.hu = 0.0;
                 cell.hv = 0.0;
@@ -525,6 +610,12 @@ AdaptiveDiagnostics AdaptiveSolver::run(AdaptiveGrid& grid, const Rainfall& rain
                 cell.hu *= frictionScale;
                 cell.hv *= frictionScale;
             }
+        }
+        for (std::size_t index = 0; index < mesh.cells.size(); ++index) {
+            if (invalidState[index])
+                throw std::runtime_error(
+                    "Adaptive timestep produced an invalid state; simulation stopped");
+            infiltrationVolume.add(infiltrationByCell[index]);
         }
         diagnostics.computeSeconds += std::chrono::duration<double>(
             std::chrono::steady_clock::now() - computeStart).count();

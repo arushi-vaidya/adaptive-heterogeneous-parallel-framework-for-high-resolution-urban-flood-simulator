@@ -9,6 +9,8 @@
 
 namespace flood {
 
+class AdaptiveOpenMPSolver;
+
 struct AdaptiveSolverOptions {
     double refineThreshold = 0.10;
     double coarsenThreshold = 0.05;
@@ -73,6 +75,12 @@ public:
                             const SolverConfig& config) const;
 
 private:
+    friend class AdaptiveOpenMPSolver;
+
+    AdaptiveDiagnostics runImpl(AdaptiveGrid& grid, const Rainfall& rainfall,
+                               const SolverConfig& config, bool useOpenMP,
+                               int openMPThreads) const;
+
     AdaptiveSolverOptions options_;
 };
 
