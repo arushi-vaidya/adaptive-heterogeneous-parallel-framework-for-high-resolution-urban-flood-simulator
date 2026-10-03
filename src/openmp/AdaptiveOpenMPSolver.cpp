@@ -21,7 +21,11 @@ AdaptiveDiagnostics AdaptiveOpenMPSolver::run(
 #ifdef FLOOD_HAS_OPENMP
     const int activeThreads = threads_ == 0 ? omp_get_max_threads() : threads_;
     return AdaptiveSolver(options_).runImpl(
-        grid, rainfall, config, true, activeThreads);
+        grid, rainfall, config, true, activeThreads
+#ifdef FLOOD_HAS_MPI
+        , MPI_COMM_NULL
+#endif
+        );
 #else
     (void)grid;
     (void)rainfall;

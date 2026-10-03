@@ -69,7 +69,9 @@ if(FLOOD_MPI_RUNTIME_FOUND)
 endif()
 
 if(FLOOD_MPI_TOOLCHAIN_FOUND)
-    target_sources(flood_core PRIVATE src/mpi/MpiSolver.cpp)
+    target_sources(flood_core PRIVATE
+        src/mpi/MpiSolver.cpp
+        src/mpi/AdaptiveMpiSolver.cpp)
     target_link_libraries(flood_core PUBLIC MPI::MPI_CXX)
     target_compile_definitions(flood_core PUBLIC FLOOD_HAS_MPI=1)
 endif()
@@ -131,6 +133,18 @@ if(BUILD_TESTING)
                 set_tests_properties(flood_mpi_${scenario}_${process_count} PROPERTIES
                     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} TIMEOUT 120)
             endforeach()
+        endforeach()
+        add_executable(flood_adaptive_mpi_tests tests/test_adaptive_mpi_solver.cpp)
+        target_link_libraries(flood_adaptive_mpi_tests PRIVATE flood_core MPI::MPI_CXX)
+        target_compile_definitions(flood_adaptive_mpi_tests PRIVATE
+            FLOOD_MASS_TOLERANCE=${FLOOD_MASS_TOLERANCE})
+        foreach(process_count 1 2 4)
+            add_test(NAME flood_adaptive_mpi_${process_count}
+                COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${process_count}
+                        ${MPIEXEC_PREFLAGS} $<TARGET_FILE:flood_adaptive_mpi_tests>
+                        ${MPIEXEC_POSTFLAGS})
+            set_tests_properties(flood_adaptive_mpi_${process_count} PROPERTIES
+                WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} TIMEOUT 180)
         endforeach()
     endif()
 endif()

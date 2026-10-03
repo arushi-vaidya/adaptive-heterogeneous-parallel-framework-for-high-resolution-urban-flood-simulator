@@ -7,9 +7,14 @@
 #include <cstddef>
 #include <vector>
 
+#ifdef FLOOD_HAS_MPI
+#include <mpi.h>
+#endif
+
 namespace flood {
 
 class AdaptiveOpenMPSolver;
+class AdaptiveMpiSolver;
 
 struct AdaptiveSolverOptions {
     double refineThreshold = 0.10;
@@ -56,6 +61,9 @@ struct AdaptiveDiagnostics {
     double massBalanceResidual = 0.0;
     double maximumInterfaceMassFluxResidual = 0.0;
     std::size_t coarseFineInterfaceSegments = 0;
+    std::size_t crossRankCoarseFineInterfaceSegments = 0;
+    std::size_t crossRankCoarseFineXSegments = 0;
+    std::size_t crossRankCoarseFineYSegments = 0;
     double coarseFineIntegratedMassFlux = 0.0;
     double maximumRegridVolumeDelta = 0.0;
     double runtimeSeconds = 0.0;
@@ -76,10 +84,15 @@ public:
 
 private:
     friend class AdaptiveOpenMPSolver;
+    friend class AdaptiveMpiSolver;
 
     AdaptiveDiagnostics runImpl(AdaptiveGrid& grid, const Rainfall& rainfall,
                                const SolverConfig& config, bool useOpenMP,
-                               int openMPThreads) const;
+                               int openMPThreads
+#ifdef FLOOD_HAS_MPI
+                               , MPI_Comm mpiComm
+#endif
+                               ) const;
 
     AdaptiveSolverOptions options_;
 };
