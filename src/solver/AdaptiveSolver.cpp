@@ -39,6 +39,12 @@ struct CompensatedSum {
     }
 };
 
+struct ConservedIntegrals {
+    long double water = 0.0L;
+    long double hu = 0.0L;
+    long double hv = 0.0L;
+};
+
 struct CellRef {
     AdaptiveCellId id;
     Cell* state;
@@ -308,8 +314,41 @@ void recordPreviousDepth(const AdaptiveGrid& grid,
     });
 }
 
+ConservedIntegrals activeIntegrals(const AdaptiveGrid& grid) {
+    ConservedIntegrals result;
+    grid.forEachActiveCell([&](AdaptiveCellId id, const Cell& cell) {
+        const AdaptivePatch& patch = grid.patch(id.patchId);
+        const long double area = static_cast<long double>(patch.grid().dx()) *
+                                 patch.grid().dy();
+        result.water += static_cast<long double>(cell.h) * area;
+        result.hu += static_cast<long double>(cell.hu) * area;
+        result.hv += static_cast<long double>(cell.hv) * area;
+    });
+    return result;
+}
+
+void recordRegridEvent(AdaptiveDiagnostics& diagnostics,
+                       AdaptiveRegridOperation operation, PatchId patchId,
+                       double time, const ConservedIntegrals& before,
+                       const AdaptiveGrid& grid) {
+    const ConservedIntegrals after = activeIntegrals(grid);
+    const double beforeWater = static_cast<double>(before.water);
+    const double afterWater = static_cast<double>(after.water);
+    const double beforeHu = static_cast<double>(before.hu);
+    const double afterHu = static_cast<double>(after.hu);
+    const double beforeHv = static_cast<double>(before.hv);
+    const double afterHv = static_cast<double>(after.hv);
+    const double waterDelta = afterWater - beforeWater;
+    diagnostics.maximumRegridVolumeDelta = std::max(
+        diagnostics.maximumRegridVolumeDelta, std::abs(waterDelta));
+    diagnostics.regridEvents.push_back({operation, patchId, time, beforeWater,
+        afterWater, waterDelta, beforeHu, afterHu, afterHu - beforeHu,
+        beforeHv, afterHv, afterHv - beforeHv});
+}
+
 void refineBalanced(AdaptiveGrid& grid, PatchId patchId,
-                    std::size_t targetLevel, std::size_t& refinementCount) {
+                    std::size_t targetLevel, std::size_t& refinementCount,
+                    AdaptiveDiagnostics& diagnostics, double time) {
     AdaptivePatch& candidate = grid.patch(patchId);
     if (!candidate.isActiveLeaf() || candidate.level() >= targetLevel) return;
     const std::size_t currentLevel = candidate.level();
@@ -322,15 +361,21 @@ void refineBalanced(AdaptiveGrid& grid, PatchId patchId,
     lowerNeighbors.erase(std::unique(lowerNeighbors.begin(), lowerNeighbors.end()),
                          lowerNeighbors.end());
     for (const PatchId neighborId : lowerNeighbors)
-        refineBalanced(grid, neighborId, currentLevel, refinementCount);
+        refineBalanced(grid, neighborId, currentLevel, refinementCount,
+                       diagnostics, time);
     if (!grid.patch(patchId).isActiveLeaf()) return;
+    const ConservedIntegrals before = activeIntegrals(grid);
     grid.refine(patchId);
+    recordRegridEvent(diagnostics, AdaptiveRegridOperation::Refine,
+                      patchId, time, before, grid);
     ++refinementCount;
-    refineBalanced(grid, patchId, targetLevel, refinementCount);
+    refineBalanced(grid, patchId, targetLevel, refinementCount,
+                   diagnostics, time);
 }
 
 void refineCandidateAndBuffer(AdaptiveGrid& grid, PatchId candidateId,
-                              std::size_t& refinementCount) {
+                              std::size_t& refinementCount,
+                              AdaptiveDiagnostics& diagnostics, double time) {
     if (!grid.patch(candidateId).isActiveLeaf() ||
         grid.patch(candidateId).level() >= grid.config().maxRefinementLevel)
         return;
@@ -343,7 +388,8 @@ void refineCandidateAndBuffer(AdaptiveGrid& grid, PatchId candidateId,
     std::sort(buffered.begin(), buffered.end());
     buffered.erase(std::unique(buffered.begin(), buffered.end()), buffered.end());
     for (const PatchId patchId : buffered)
-        refineBalanced(grid, patchId, level + 1, refinementCount);
+        refineBalanced(grid, patchId, level + 1, refinementCount,
+                       diagnostics, time);
 }
 
 std::size_t activeLeafCellCount(const AdaptiveGrid& grid, std::size_t level) {
@@ -437,6 +483,9 @@ AdaptiveDiagnostics AdaptiveSolver::run(AdaptiveGrid& grid, const Rainfall& rain
                     diagnostics.maximumInterfaceMassFluxResidual = std::max(
                         diagnostics.maximumInterfaceMassFluxResidual,
                         std::abs(leftMassContribution + rightMassContribution));
+                    ++diagnostics.coarseFineInterfaceSegments;
+                    diagnostics.coarseFineIntegratedMassFlux +=
+                        std::abs(scale * face.flux.massRate * face.length) * dt;
                 }
             }
             if (face.flux.boundaryOutflow) {
@@ -510,7 +559,8 @@ AdaptiveDiagnostics AdaptiveSolver::run(AdaptiveGrid& grid, const Rainfall& rain
                     return left < right;
                 });
             for (const PatchId patchId : candidates)
-                refineCandidateAndBuffer(grid, patchId, diagnostics.refinedPatches);
+                refineCandidateAndBuffer(grid, patchId, diagnostics.refinedPatches,
+                                         diagnostics, time);
 
             std::vector<PatchId> possibleCoarsen;
             for (PatchId parentId = 0; parentId < grid.patchCount(); ++parentId) {
@@ -552,7 +602,10 @@ AdaptiveDiagnostics AdaptiveSolver::run(AdaptiveGrid& grid, const Rainfall& rain
                     }
                 }
                 if (violatesBalance) continue;
+                const ConservedIntegrals before = activeIntegrals(grid);
                 grid.coarsen(parentId);
+                recordRegridEvent(diagnostics, AdaptiveRegridOperation::Coarsen,
+                                  parentId, time, before, grid);
                 ++diagnostics.coarsenedPatches;
                 coarseningPersistence[parentId] = 0;
             }

@@ -5,6 +5,7 @@
 #include "solver/SerialSolver.hpp"
 
 #include <cstddef>
+#include <vector>
 
 namespace flood {
 
@@ -13,6 +14,23 @@ struct AdaptiveSolverOptions {
     double coarsenThreshold = 0.05;
     std::size_t coarsenPersistence = 3;
     std::size_t regridIntervalSteps = 10;
+};
+
+enum class AdaptiveRegridOperation { Refine, Coarsen };
+
+struct AdaptiveRegridEvent {
+    AdaptiveRegridOperation operation;
+    PatchId patchId;
+    double time;
+    double waterVolumeBefore;
+    double waterVolumeAfter;
+    double waterVolumeDelta;
+    double huIntegralBefore;
+    double huIntegralAfter;
+    double huIntegralDelta;
+    double hvIntegralBefore;
+    double hvIntegralAfter;
+    double hvIntegralDelta;
 };
 
 struct AdaptiveDiagnostics {
@@ -26,6 +44,7 @@ struct AdaptiveDiagnostics {
     double fineCellPercentage = 0.0;
     std::size_t refinedPatches = 0;
     std::size_t coarsenedPatches = 0;
+    std::vector<AdaptiveRegridEvent> regridEvents;
     double maximumActivity = 0.0;
     double initialWaterVolume = 0.0;
     double rainfallVolume = 0.0;
@@ -34,6 +53,9 @@ struct AdaptiveDiagnostics {
     double finalWaterVolume = 0.0;
     double massBalanceResidual = 0.0;
     double maximumInterfaceMassFluxResidual = 0.0;
+    std::size_t coarseFineInterfaceSegments = 0;
+    double coarseFineIntegratedMassFlux = 0.0;
+    double maximumRegridVolumeDelta = 0.0;
     double runtimeSeconds = 0.0;
     double computeSeconds = 0.0;
     double regriddingSeconds = 0.0;
