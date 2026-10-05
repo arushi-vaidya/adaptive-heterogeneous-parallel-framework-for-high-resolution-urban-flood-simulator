@@ -1,5 +1,6 @@
 #include "solver/AdaptiveSolver.hpp"
 
+#include "solver/AdaptiveLoadBalance.hpp"
 #include "solver/detail/FiniteVolumeKernels.hpp"
 
 #include <algorithm>
@@ -120,7 +121,9 @@ void validateConfig(const SolverConfig& config,
         !std::isfinite(options.coarsenThreshold) ||
         options.coarsenThreshold < 0.0 ||
         options.refineThreshold <= options.coarsenThreshold ||
-        options.coarsenPersistence == 0 || options.regridIntervalSteps == 0)
+        options.coarsenPersistence == 0 || options.regridIntervalSteps == 0 ||
+        !std::isfinite(options.loadBalanceImbalanceThreshold) ||
+        options.loadBalanceImbalanceThreshold < 1.0)
         throw std::invalid_argument("Invalid adaptive refinement/coarsening options");
 }
 
@@ -289,6 +292,7 @@ public:
     }
 
     void refresh(const AdaptiveGrid& grid) {
+        const std::size_t previousPatchCount = patchOwners.size();
         patchOwners.resize(grid.patchCount(), 0);
         std::size_t finestScale = 1;
         for (std::size_t level = 0; level < grid.config().maxRefinementLevel; ++level)
@@ -296,11 +300,13 @@ public:
         for (PatchId id = 0; id < grid.patchCount(); ++id) {
             const AdaptivePatch& patch = grid.patch(id);
             if (patch.parentId()) {
-                // Static ownership: descendants remain on their level-0 patch's rank.
                 patchOwners[static_cast<std::size_t>(id)] =
                     patchOwners[static_cast<std::size_t>(*patch.parentId())];
                 continue;
             }
+            if (dynamicOwnership_ &&
+                static_cast<std::size_t>(id) < previousPatchCount)
+                continue;
             const std::size_t row = patch.rowOriginFineUnits() / finestScale +
                                     patch.grid().rows() / 2;
             const std::size_t col = patch.colOriginFineUnits() / finestScale +
@@ -315,6 +321,21 @@ public:
         }
     }
 
+    void applyRootOwnership(const AdaptiveOwnershipPlan& plan,
+                            const AdaptiveGrid& grid) {
+        if (plan.rootPatchIds.size() != plan.ownerRanks.size())
+            throw std::invalid_argument("Adaptive ownership plan has mismatched arrays");
+        for (std::size_t index = 0; index < plan.rootPatchIds.size(); ++index) {
+            const PatchId id = plan.rootPatchIds[index];
+            if (grid.patch(id).parentId() || plan.ownerRanks[index] < 0 ||
+                plan.ownerRanks[index] >= size)
+                throw std::invalid_argument("Adaptive ownership plan has an invalid root owner");
+            patchOwners.at(static_cast<std::size_t>(id)) = plan.ownerRanks[index];
+        }
+        dynamicOwnership_ = true;
+        refresh(grid);
+    }
+
     std::vector<int> cellOwners(const Mesh& mesh) const {
         std::vector<int> result;
         result.reserve(mesh.cells.size());
@@ -325,6 +346,10 @@ public:
 
     int ownerOfPatch(PatchId id) const {
         return patchOwners.at(static_cast<std::size_t>(id));
+    }
+
+    const std::vector<int>& patchOwnerMap() const noexcept {
+        return patchOwners;
     }
 
     MPI_Comm comm;
@@ -348,6 +373,7 @@ private:
     }
 
     std::vector<int> patchOwners;
+    bool dynamicOwnership_ = false;
 };
 
 void completePackedExchange(const std::vector<double>& local,
@@ -437,6 +463,122 @@ void synchronizeOwnedStates(AdaptiveGrid& grid,
     });
 }
 
+PatchId rootPatchFor(const AdaptiveGrid& grid, PatchId patchId);
+
+bool belongsToMigratingRoot(const AdaptiveGrid& grid, PatchId patchId,
+                            const std::vector<PatchId>& migratingRoots) {
+    return std::binary_search(migratingRoots.begin(), migratingRoots.end(),
+                              rootPatchFor(grid, patchId));
+}
+
+void synchronizeMigratingStates(
+    AdaptiveGrid& grid, const std::vector<PatchId>& migratingRoots,
+    const AdaptiveMpiTopology& topology) {
+    std::size_t migratedCellCount = 0;
+    for (const PatchId patchId : grid.activePatches()) {
+        if (belongsToMigratingRoot(grid, patchId, migratingRoots))
+            migratedCellCount += grid.patch(patchId).grid().size();
+    }
+    std::vector<double> local(migratedCellCount * 4, 0.0);
+    std::vector<double> global(local.size(), 0.0);
+    std::size_t index = 0;
+    grid.forEachActiveCell([&](AdaptiveCellId id, const Cell& cell) {
+        if (!belongsToMigratingRoot(grid, id.patchId, migratingRoots)) return;
+        if (topology.ownerOfPatch(id.patchId) == topology.rank) {
+            local[index * 4] = cell.bed;
+            local[index * 4 + 1] = cell.h;
+            local[index * 4 + 2] = cell.hu;
+            local[index * 4 + 3] = cell.hv;
+        }
+        ++index;
+    });
+    if (index != migratedCellCount)
+        throw std::logic_error("Adaptive migration state pack has an invalid size");
+    completePackedExchange(local, global, topology,
+                           "MPI_Iallreduce adaptive migrated patch state");
+    index = 0;
+    grid.forEachActiveCell([&](AdaptiveCellId id, Cell& cell) {
+        if (!belongsToMigratingRoot(grid, id.patchId, migratingRoots)) return;
+        cell.bed = global[index * 4];
+        cell.h = global[index * 4 + 1];
+        cell.hu = global[index * 4 + 2];
+        cell.hv = global[index * 4 + 3];
+        ++index;
+    });
+}
+
+void synchronizeOwnedDepthCache(
+    const AdaptiveGrid& grid, std::map<CellKey, double>& previousDepth,
+    const std::vector<PatchId>& migratingRoots,
+    const AdaptiveMpiTopology& topology) {
+    std::size_t migratedCellCount = 0;
+    for (const PatchId patchId : grid.activePatches()) {
+        if (belongsToMigratingRoot(grid, patchId, migratingRoots))
+            migratedCellCount += grid.patch(patchId).grid().size();
+    }
+    std::vector<double> local(migratedCellCount, 0.0);
+    std::vector<double> global(local.size(), 0.0);
+    std::size_t index = 0;
+    grid.forEachActiveCell([&](AdaptiveCellId id, const Cell&) {
+        if (!belongsToMigratingRoot(grid, id.patchId, migratingRoots)) return;
+        if (topology.ownerOfPatch(id.patchId) == topology.rank) {
+            const auto found = previousDepth.find(keyFor(id));
+            if (found == previousDepth.end())
+                throw std::logic_error(
+                    "Adaptive activity cache is missing an active cell");
+            local[index] = found->second;
+        }
+        ++index;
+    });
+    if (index != migratedCellCount)
+        throw std::logic_error("Adaptive migration activity-cache pack has an invalid size");
+    completePackedExchange(local, global, topology,
+                           "MPI_Iallreduce adaptive migrated activity cache");
+    index = 0;
+    grid.forEachActiveCell([&](AdaptiveCellId id, const Cell&) {
+        if (!belongsToMigratingRoot(grid, id.patchId, migratingRoots)) return;
+        previousDepth[keyFor(id)] = global[index++];
+    });
+}
+
+void verifyAdaptiveOwnership(const AdaptiveGrid& grid,
+                             const AdaptiveMpiTopology& topology) {
+    const auto& owners = topology.patchOwnerMap();
+    std::vector<int> minimum(owners.size(), 0), maximum(owners.size(), 0);
+    checkAdaptiveMpi(MPI_Allreduce(owners.data(), minimum.data(),
+        adaptiveMpiCount(owners.size()), MPI_INT, MPI_MIN, topology.comm),
+        "MPI_Allreduce adaptive minimum owner map");
+    checkAdaptiveMpi(MPI_Allreduce(owners.data(), maximum.data(),
+        adaptiveMpiCount(owners.size()), MPI_INT, MPI_MAX, topology.comm),
+        "MPI_Allreduce adaptive maximum owner map");
+    if (minimum != maximum)
+        throw std::logic_error("MPI ranks disagree on adaptive patch ownership");
+
+    std::vector<unsigned long long> local(owners.size(), 0), global(owners.size(), 0);
+    for (const PatchId patchId : grid.activePatches()) {
+        if (topology.ownerOfPatch(patchId) == topology.rank)
+            local[static_cast<std::size_t>(patchId)] = 1;
+    }
+    checkAdaptiveMpi(MPI_Allreduce(local.data(), global.data(),
+        adaptiveMpiCount(local.size()), MPI_UNSIGNED_LONG_LONG, MPI_SUM,
+        topology.comm), "MPI_Allreduce adaptive active patch owners");
+    for (const PatchId patchId : grid.activePatches()) {
+        if (global[static_cast<std::size_t>(patchId)] != 1)
+            throw std::logic_error(
+                "An active adaptive patch does not have exactly one MPI owner");
+    }
+    for (PatchId patchId = 0; patchId < grid.patchCount(); ++patchId) {
+        const AdaptivePatch& patch = grid.patch(patchId);
+        if (patch.parentId() &&
+            topology.ownerOfPatch(*patch.parentId()) != topology.ownerOfPatch(patchId))
+            throw std::logic_error(
+                "Adaptive descendants do not share their root owner's rank");
+        for (const PatchNeighbor& neighbor : patch.neighbors()) {
+            if (neighbor.patchId) (void)grid.patch(*neighbor.patchId);
+        }
+    }
+}
+
 void exchangeRemoteFluxes(Mesh& mesh,
                           const std::vector<std::size_t>& remoteFaceIndices,
                           const std::vector<int>& cellOwners,
@@ -489,7 +631,8 @@ void exchangeRemoteLimiters(const Mesh& mesh,
 }
 
 ConservedIntegrals activeIntegralsOwned(const AdaptiveGrid& grid,
-                                        const AdaptiveMpiTopology& topology) {
+                                        const AdaptiveMpiTopology& topology,
+                                        double& communicationSeconds) {
     ConservedIntegrals local;
     for (const PatchId patchId : grid.activePatches()) {
         if (topology.ownerOfPatch(patchId) != topology.rank) continue;
@@ -506,9 +649,11 @@ ConservedIntegrals activeIntegralsOwned(const AdaptiveGrid& grid,
                                    static_cast<double>(local.hu),
                                    static_cast<double>(local.hv)};
     double globalValues[3]{};
+    const double communicationStart = MPI_Wtime();
     checkAdaptiveMpi(MPI_Allreduce(localValues, globalValues, 3, MPI_DOUBLE,
                                    MPI_SUM, topology.comm),
                      "MPI_Allreduce adaptive conserved integrals");
+    communicationSeconds += MPI_Wtime() - communicationStart;
     return {globalValues[0], globalValues[1], globalValues[2]};
 }
 #endif
@@ -766,6 +911,89 @@ void reduceAdaptiveCount(std::size_t& value, const AdaptiveMpiTopology& topology
                                    MPI_SUM, topology.comm), operation);
     value = static_cast<std::size_t>(global);
 }
+
+PatchId rootPatchFor(const AdaptiveGrid& grid, PatchId patchId) {
+    while (grid.patch(patchId).parentId())
+        patchId = *grid.patch(patchId).parentId();
+    return patchId;
+}
+
+std::vector<AdaptiveRootWorkload> adaptiveRootWorkloads(
+    const AdaptiveGrid& grid, const AdaptiveMpiTopology& topology) {
+    std::map<PatchId, AdaptiveRootWorkload> roots;
+    for (PatchId patchId = 0; patchId < grid.patchCount(); ++patchId) {
+        if (!grid.patch(patchId).parentId())
+            roots.emplace(patchId, AdaptiveRootWorkload{
+                patchId, 0, 0, topology.ownerOfPatch(patchId)});
+    }
+    for (const PatchId patchId : grid.activePatches()) {
+        const PatchId rootId = rootPatchFor(grid, patchId);
+        AdaptiveRootWorkload& root = roots.at(rootId);
+        ++root.activePatches;
+        root.activeLeafCells += grid.patch(patchId).grid().size();
+    }
+    std::vector<AdaptiveRootWorkload> result;
+    result.reserve(roots.size());
+    for (const auto& entry : roots) result.push_back(entry.second);
+    return result;
+}
+
+std::vector<AdaptiveRankWorkload> adaptiveRankWorkloads(
+    const AdaptiveGrid& grid, const AdaptiveMpiTopology& topology) {
+    std::vector<AdaptiveRankWorkload> ranks(
+        static_cast<std::size_t>(topology.size));
+    for (int rank = 0; rank < topology.size; ++rank)
+        ranks[static_cast<std::size_t>(rank)].rank = rank;
+    for (const PatchId patchId : grid.activePatches()) {
+        const AdaptivePatch& patch = grid.patch(patchId);
+        AdaptiveRankWorkload& rank =
+            ranks[static_cast<std::size_t>(topology.ownerOfPatch(patchId))];
+        ++rank.activePatches;
+        const std::size_t cells = patch.grid().size();
+        rank.activeLeafCells += cells;
+        if (patch.level() == 0) rank.level0Cells += cells;
+        else if (patch.level() == 1) rank.level1Cells += cells;
+        else if (patch.level() == 2) rank.level2Cells += cells;
+        rank.estimatedWork = static_cast<double>(rank.activeLeafCells);
+    }
+    return ranks;
+}
+
+std::vector<AdaptiveRankWorkload> projectedAdaptiveRankWorkloads(
+    const AdaptiveGrid& grid, const AdaptiveOwnershipPlan& plan, int rankCount) {
+    std::map<PatchId, int> rootOwners;
+    for (std::size_t index = 0; index < plan.rootPatchIds.size(); ++index)
+        rootOwners.emplace(plan.rootPatchIds[index], plan.ownerRanks[index]);
+    std::vector<AdaptiveRankWorkload> ranks(static_cast<std::size_t>(rankCount));
+    for (int rank = 0; rank < rankCount; ++rank)
+        ranks[static_cast<std::size_t>(rank)].rank = rank;
+    for (const PatchId patchId : grid.activePatches()) {
+        const AdaptivePatch& patch = grid.patch(patchId);
+        const PatchId rootId = rootPatchFor(grid, patchId);
+        AdaptiveRankWorkload& rank =
+            ranks[static_cast<std::size_t>(rootOwners.at(rootId))];
+        ++rank.activePatches;
+        const std::size_t cells = patch.grid().size();
+        rank.activeLeafCells += cells;
+        if (patch.level() == 0) rank.level0Cells += cells;
+        else if (patch.level() == 1) rank.level1Cells += cells;
+        else if (patch.level() == 2) rank.level2Cells += cells;
+        rank.estimatedWork = static_cast<double>(rank.activeLeafCells);
+    }
+    return ranks;
+}
+
+double adaptiveWorkImbalance(const std::vector<AdaptiveRankWorkload>& ranks) {
+    if (ranks.empty()) return 1.0;
+    double total = 0.0;
+    double maximum = 0.0;
+    for (const AdaptiveRankWorkload& rank : ranks) {
+        total += rank.estimatedWork;
+        maximum = std::max(maximum, rank.estimatedWork);
+    }
+    const double mean = total / static_cast<double>(ranks.size());
+    return mean > 0.0 ? maximum / mean : 1.0;
+}
 #endif
 
 } // namespace
@@ -797,23 +1025,43 @@ AdaptiveDiagnostics AdaptiveSolver::runImpl(AdaptiveGrid& grid,
             "Adaptive OpenMP backend is unavailable; configure with FLOOD_ENABLE_OPENMP=ON");
 #endif
     validateConfig(config, options_, grid);
+    AdaptiveDiagnostics diagnostics;
 #ifdef FLOOD_HAS_MPI
     std::unique_ptr<AdaptiveMpiTopology> mpiTopology;
     if (mpiComm != MPI_COMM_NULL)
         mpiTopology = std::make_unique<AdaptiveMpiTopology>(grid, mpiComm);
     const bool useMpi = static_cast<bool>(mpiTopology);
+    if (options_.dynamicLoadBalancing && !useMpi)
+        throw std::invalid_argument(
+            "Dynamic adaptive load balancing requires the MPI backend");
     const std::function<ConservedIntegrals(const AdaptiveGrid&)> integrate =
-        [&mpiTopology](const AdaptiveGrid& value) {
+        [&mpiTopology, &diagnostics](const AdaptiveGrid& value) {
             if (mpiTopology) mpiTopology->refresh(value);
-            return mpiTopology ? activeIntegralsOwned(value, *mpiTopology)
+            return mpiTopology ? activeIntegralsOwned(
+                                     value, *mpiTopology,
+                                     diagnostics.communicationSeconds)
                                : activeIntegrals(value);
         };
 #else
+    if (options_.dynamicLoadBalancing)
+        throw std::runtime_error(
+            "Dynamic adaptive load balancing requires an MPI-enabled build");
     const std::function<ConservedIntegrals(const AdaptiveGrid&)> integrate =
         [](const AdaptiveGrid& value) { return activeIntegrals(value); };
 #endif
-    const auto runtimeStart = std::chrono::steady_clock::now();
-    AdaptiveDiagnostics diagnostics;
+#ifdef FLOOD_HAS_MPI
+    const auto nowSeconds = [&useMpi]() {
+        if (useMpi) return MPI_Wtime();
+        return std::chrono::duration<double>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+    };
+#else
+    const auto nowSeconds = []() {
+        return std::chrono::duration<double>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+    };
+#endif
+    const double runtimeStart = nowSeconds();
     CompensatedSum initialVolume, rainfallVolume, infiltrationVolume, outflowVolume;
     std::map<CellKey, double> previousDepth;
     grid.forEachActiveCell([&](AdaptiveCellId id, const Cell& cell) {
@@ -828,17 +1076,112 @@ AdaptiveDiagnostics AdaptiveSolver::runImpl(AdaptiveGrid& grid,
     });
     diagnostics.initialWaterVolume = initialVolume.value;
 #ifdef FLOOD_HAS_MPI
-    if (useMpi)
+    if (useMpi) {
+        const double communicationStart = nowSeconds();
         reduceAdaptiveSum(diagnostics.initialWaterVolume, *mpiTopology,
                           "MPI_Allreduce adaptive initial volume");
+        diagnostics.communicationSeconds += nowSeconds() - communicationStart;
+    }
 #endif
     recordPreviousDepth(grid, previousDepth);
+
+    const auto collectWorkloadSnapshot = [&](std::size_t step, double simulationTime) {
+        AdaptiveWorkloadSnapshot snapshot;
+        snapshot.step = step;
+        snapshot.time = simulationTime;
+#ifdef FLOOD_HAS_MPI
+        if (useMpi) {
+            std::array<unsigned long long, 5> localCounts{};
+            const double localTimes[2] = {
+                diagnostics.computeSeconds, diagnostics.communicationSeconds};
+            for (const PatchId patchId : grid.activePatches()) {
+                if (mpiTopology->ownerOfPatch(patchId) != mpiTopology->rank) continue;
+                const AdaptivePatch& patch = grid.patch(patchId);
+                const std::size_t cells = patch.grid().size();
+                ++localCounts[0];
+                localCounts[1] += static_cast<unsigned long long>(cells);
+                localCounts[2 + patch.level()] +=
+                    static_cast<unsigned long long>(cells);
+            }
+            std::vector<unsigned long long> rankCounts(
+                static_cast<std::size_t>(mpiTopology->size) * localCounts.size());
+            std::vector<double> rankTimes(
+                static_cast<std::size_t>(mpiTopology->size) * 2);
+            const double communicationStart = nowSeconds();
+            checkAdaptiveMpi(MPI_Allgather(localCounts.data(),
+                static_cast<int>(localCounts.size()), MPI_UNSIGNED_LONG_LONG,
+                rankCounts.data(), static_cast<int>(localCounts.size()),
+                MPI_UNSIGNED_LONG_LONG, mpiTopology->comm),
+                "MPI_Allgather adaptive workload counts");
+            checkAdaptiveMpi(MPI_Allgather(localTimes, 2, MPI_DOUBLE,
+                rankTimes.data(), 2, MPI_DOUBLE, mpiTopology->comm),
+                "MPI_Allgather adaptive workload timings");
+            diagnostics.communicationSeconds += nowSeconds() - communicationStart;
+            snapshot.ranks.reserve(static_cast<std::size_t>(mpiTopology->size));
+            for (int rank = 0; rank < mpiTopology->size; ++rank) {
+                const std::size_t offset = static_cast<std::size_t>(rank) *
+                    localCounts.size();
+                AdaptiveRankWorkload workload;
+                workload.rank = rank;
+                workload.activePatches = static_cast<std::size_t>(rankCounts[offset]);
+                workload.activeLeafCells =
+                    static_cast<std::size_t>(rankCounts[offset + 1]);
+                workload.level0Cells = static_cast<std::size_t>(rankCounts[offset + 2]);
+                workload.level1Cells = static_cast<std::size_t>(rankCounts[offset + 3]);
+                workload.level2Cells = static_cast<std::size_t>(rankCounts[offset + 4]);
+                workload.estimatedWork =
+                    static_cast<double>(workload.activeLeafCells);
+                workload.computeSeconds = rankTimes[static_cast<std::size_t>(rank) * 2];
+                workload.communicationSeconds =
+                    rankTimes[static_cast<std::size_t>(rank) * 2 + 1];
+                snapshot.ranks.push_back(workload);
+            }
+        } else
+#endif
+        {
+            AdaptiveRankWorkload workload;
+            for (const PatchId patchId : grid.activePatches()) {
+                const AdaptivePatch& patch = grid.patch(patchId);
+                const std::size_t cells = patch.grid().size();
+                ++workload.activePatches;
+                workload.activeLeafCells += cells;
+                if (patch.level() == 0) workload.level0Cells += cells;
+                else if (patch.level() == 1) workload.level1Cells += cells;
+                else if (patch.level() == 2) workload.level2Cells += cells;
+            }
+            workload.estimatedWork =
+                static_cast<double>(workload.activeLeafCells);
+            workload.computeSeconds = diagnostics.computeSeconds;
+            workload.communicationSeconds = diagnostics.communicationSeconds;
+            snapshot.ranks.push_back(workload);
+        }
+        snapshot.minimumRankWork = std::numeric_limits<double>::infinity();
+        double totalWork = 0.0;
+        for (const AdaptiveRankWorkload& rank : snapshot.ranks) {
+            snapshot.minimumRankWork =
+                std::min(snapshot.minimumRankWork, rank.estimatedWork);
+            snapshot.maximumRankWork =
+                std::max(snapshot.maximumRankWork, rank.estimatedWork);
+            totalWork += rank.estimatedWork;
+        }
+        snapshot.meanRankWork = snapshot.ranks.empty() ? 0.0 :
+            totalWork / static_cast<double>(snapshot.ranks.size());
+        if (snapshot.ranks.empty()) snapshot.minimumRankWork = 0.0;
+        snapshot.loadImbalance = snapshot.meanRankWork > 0.0
+            ? snapshot.maximumRankWork / snapshot.meanRankWork : 1.0;
+        diagnostics.workloadSnapshots.push_back(std::move(snapshot));
+    };
 
     double time = 0.0;
     double lastDt = 0.0;
     std::map<PatchId, std::size_t> coarseningPersistence;
+#ifdef FLOOD_HAS_MPI
+    std::optional<std::size_t> lastMigrationStep;
+    AdaptivePatchPartitioner partitioner;
+#endif
     while (time < config.endTime) {
-        const auto computeStart = std::chrono::steady_clock::now();
+        const double computeStart = nowSeconds();
+        const double meshStart = nowSeconds();
         Mesh mesh = buildMesh(grid);
         const auto cellFaces = facesByCell(mesh);
 #ifdef FLOOD_HAS_MPI
@@ -847,9 +1190,14 @@ AdaptiveDiagnostics AdaptiveSolver::runImpl(AdaptiveGrid& grid,
             ? mpiTopology->cellOwners(mesh) : std::vector<int>();
         const std::vector<std::size_t> remoteFaceIndices = useMpi
             ? remoteFaces(mesh, cellOwners) : std::vector<std::size_t>();
-        if (useMpi)
+        if (useMpi) {
+            const double communicationStart = nowSeconds();
             exchangeRemoteStates(mesh, cellOwners, remoteFaceIndices, *mpiTopology);
+            diagnostics.communicationSeconds += nowSeconds() - communicationStart;
+        }
 #endif
+        diagnostics.meshSeconds += nowSeconds() - meshStart;
+        const double cflStart = nowSeconds();
         double maximumRate = 0.0;
         const auto cellCount = static_cast<std::ptrdiff_t>(mesh.cells.size());
 #ifdef FLOOD_HAS_OPENMP
@@ -872,9 +1220,12 @@ AdaptiveDiagnostics AdaptiveSolver::runImpl(AdaptiveGrid& grid,
                 (std::abs(u) + wave) / cell.dx + (std::abs(v) + wave) / cell.dy);
         }
 #ifdef FLOOD_HAS_MPI
-        if (useMpi)
+        if (useMpi) {
+            const double communicationStart = nowSeconds();
             reduceAdaptiveMax(maximumRate, *mpiTopology,
                               "MPI_Allreduce adaptive CFL rate");
+            diagnostics.communicationSeconds += nowSeconds() - communicationStart;
+        }
 #endif
         double dt = maximumRate > 0.0 ? config.cfl / maximumRate : config.maxTimestep;
         dt = std::min({dt, config.maxTimestep, config.endTime - time});
@@ -883,6 +1234,8 @@ AdaptiveDiagnostics AdaptiveSolver::runImpl(AdaptiveGrid& grid,
         if (!(dt > 0.0) || !std::isfinite(dt))
             throw std::runtime_error("Adaptive CFL timestep became invalid");
 
+        diagnostics.cflSeconds += nowSeconds() - cflStart;
+        const double interfaceStart = nowSeconds();
         applyBoundaryAndComputeFluxes(mesh, config.boundary, config.gravity,
                                       config.dryDepth, useOpenMP, openMPThreads
 #ifdef FLOOD_HAS_MPI
@@ -891,8 +1244,11 @@ AdaptiveDiagnostics AdaptiveSolver::runImpl(AdaptiveGrid& grid,
 #endif
                                       );
 #ifdef FLOOD_HAS_MPI
-        if (useMpi)
+        if (useMpi) {
+            const double communicationStart = nowSeconds();
             exchangeRemoteFluxes(mesh, remoteFaceIndices, cellOwners, *mpiTopology);
+            diagnostics.communicationSeconds += nowSeconds() - communicationStart;
+        }
 #endif
         std::vector<double> outgoing(mesh.cells.size(), 0.0);
 #ifdef FLOOD_HAS_OPENMP
@@ -943,10 +1299,15 @@ AdaptiveDiagnostics AdaptiveSolver::runImpl(AdaptiveGrid& grid,
                 faceScales[faceIndex] = limiter[face.flux.donor];
         }
 #ifdef FLOOD_HAS_MPI
-        if (useMpi)
+        if (useMpi) {
+            const double communicationStart = nowSeconds();
             exchangeRemoteLimiters(mesh, remoteFaceIndices, cellOwners, limiter,
                                    *mpiTopology, faceScales);
+            diagnostics.communicationSeconds += nowSeconds() - communicationStart;
+        }
 #endif
+        diagnostics.interfaceSeconds += nowSeconds() - interfaceStart;
+        const double updateStart = nowSeconds();
         std::vector<State> delta(mesh.cells.size(), State{0.0, 0.0, 0.0});
         std::vector<double> infiltrationByCell(mesh.cells.size(), 0.0);
         std::vector<unsigned char> invalidState(mesh.cells.size(), 0);
@@ -1093,18 +1454,25 @@ AdaptiveDiagnostics AdaptiveSolver::runImpl(AdaptiveGrid& grid,
             infiltrationVolume.add(infiltrationByCell[index]);
         }
 #ifdef FLOOD_HAS_MPI
-        if (useMpi)
+        if (useMpi) {
+            const double communicationStart = nowSeconds();
             exchangeRemoteStates(mesh, cellOwners, remoteFaceIndices, *mpiTopology);
+            diagnostics.communicationSeconds += nowSeconds() - communicationStart;
+        }
 #endif
-        diagnostics.computeSeconds += std::chrono::duration<double>(
-            std::chrono::steady_clock::now() - computeStart).count();
-        const auto activityStart = std::chrono::steady_clock::now();
+        diagnostics.updateSeconds += nowSeconds() - updateStart;
+        const double activityStart = nowSeconds();
 #ifdef FLOOD_HAS_MPI
-        const auto activity = useMpi
-            ? activityByPatchOwned(grid, mesh, previousDepth, config.gravity,
-                                   config.dryDepth, cellOwners, *mpiTopology)
-            : activityByPatch(grid, mesh, previousDepth, config.gravity,
-                              config.dryDepth);
+        std::map<PatchId, double> activity;
+        if (useMpi) {
+            const double communicationStart = nowSeconds();
+            activity = activityByPatchOwned(grid, mesh, previousDepth, config.gravity,
+                                            config.dryDepth, cellOwners, *mpiTopology);
+            diagnostics.communicationSeconds += nowSeconds() - communicationStart;
+        } else {
+            activity = activityByPatch(grid, mesh, previousDepth, config.gravity,
+                                       config.dryDepth);
+        }
 #else
         const auto activity = activityByPatch(
             grid, mesh, previousDepth, config.gravity, config.dryDepth);
@@ -1112,15 +1480,15 @@ AdaptiveDiagnostics AdaptiveSolver::runImpl(AdaptiveGrid& grid,
         for (const auto& entry : activity)
             diagnostics.maximumActivity = std::max(diagnostics.maximumActivity,
                                                     entry.second);
-        diagnostics.computeSeconds += std::chrono::duration<double>(
-            std::chrono::steady_clock::now() - activityStart).count();
+        diagnostics.activitySeconds += nowSeconds() - activityStart;
+        diagnostics.computeSeconds += nowSeconds() - computeStart;
         time += dt;
         lastDt = dt;
         ++diagnostics.steps;
 
         if (diagnostics.steps % options_.regridIntervalSteps == 0 &&
             time < config.endTime && grid.config().maxRefinementLevel > 0) {
-            const auto regridStart = std::chrono::steady_clock::now();
+            const double regridStart = nowSeconds();
             std::vector<PatchId> candidates;
             for (const PatchId patchId : grid.activePatches()) {
                 const AdaptivePatch& patch = grid.patch(patchId);
@@ -1188,15 +1556,107 @@ AdaptiveDiagnostics AdaptiveSolver::runImpl(AdaptiveGrid& grid,
                 coarseningPersistence[parentId] = 0;
             }
             recordPreviousDepth(grid, previousDepth);
-            diagnostics.regriddingSeconds += std::chrono::duration<double>(
-                std::chrono::steady_clock::now() - regridStart).count();
+            diagnostics.regriddingSeconds += nowSeconds() - regridStart;
         }
+#ifdef FLOOD_HAS_MPI
+        if (useMpi && options_.dynamicLoadBalancing) {
+            const std::vector<AdaptiveRootWorkload> rootWorkloads =
+                adaptiveRootWorkloads(grid, *mpiTopology);
+            const std::vector<AdaptiveRankWorkload> preRankWorkloads =
+                adaptiveRankWorkloads(grid, *mpiTopology);
+            const double preImbalance = adaptiveWorkImbalance(preRankWorkloads);
+            const bool trigger = partitioner.shouldRebalance(
+                preImbalance, diagnostics.steps, lastMigrationStep,
+                options_.loadBalanceImbalanceThreshold,
+                options_.loadBalanceCooldownSteps);
+            const int localTrigger = trigger ? 1 : 0;
+            int minimumTrigger = 0, maximumTrigger = 0;
+            checkAdaptiveMpi(MPI_Allreduce(&localTrigger, &minimumTrigger, 1,
+                MPI_INT, MPI_MIN, mpiTopology->comm),
+                "MPI_Allreduce adaptive rebalance trigger minimum");
+            checkAdaptiveMpi(MPI_Allreduce(&localTrigger, &maximumTrigger, 1,
+                MPI_INT, MPI_MAX, mpiTopology->comm),
+                "MPI_Allreduce adaptive rebalance trigger maximum");
+            if (minimumTrigger != maximumTrigger)
+                throw std::logic_error(
+                    "MPI ranks disagree on the adaptive rebalance trigger");
+
+            if (trigger) {
+                const AdaptiveOwnershipPlan plan =
+                    partitioner.propose(rootWorkloads, mpiTopology->size);
+                bool ownershipChanges = false;
+                std::size_t migratedPatches = 0;
+                std::size_t migratedCells = 0;
+                std::vector<PatchId> migratingRoots;
+                for (std::size_t index = 0; index < rootWorkloads.size(); ++index) {
+                    if (plan.ownerRanks[index] ==
+                        rootWorkloads[index].currentOwnerRank)
+                        continue;
+                    ownershipChanges = true;
+                    migratingRoots.push_back(rootWorkloads[index].rootPatchId);
+                    migratedPatches += rootWorkloads[index].activePatches;
+                    migratedCells += rootWorkloads[index].activeLeafCells;
+                }
+                if (ownershipChanges &&
+                    plan.projectedImbalance < preImbalance) {
+                    const std::vector<AdaptiveRankWorkload> postRankWorkloads =
+                        projectedAdaptiveRankWorkloads(
+                            grid, plan, mpiTopology->size);
+                    const double postImbalance =
+                        adaptiveWorkImbalance(postRankWorkloads);
+                    const double migrationStart = nowSeconds();
+                    checkAdaptiveMpi(MPI_Barrier(mpiTopology->comm),
+                                     "MPI_Barrier adaptive pre-migration");
+                    synchronizeMigratingStates(
+                        grid, migratingRoots, *mpiTopology);
+                    synchronizeOwnedDepthCache(
+                        grid, previousDepth, migratingRoots, *mpiTopology);
+                    mpiTopology->applyRootOwnership(plan, grid);
+                    verifyAdaptiveOwnership(grid, *mpiTopology);
+                    checkAdaptiveMpi(MPI_Barrier(mpiTopology->comm),
+                                     "MPI_Barrier adaptive post-migration");
+                    double migrationSeconds = nowSeconds() - migrationStart;
+                    reduceAdaptiveMax(migrationSeconds, *mpiTopology,
+                                      "MPI_Allreduce adaptive migration time");
+
+                    AdaptiveLoadBalanceEvent event;
+                    event.timestep = diagnostics.steps;
+                    event.migratedPatchCount = migratedPatches;
+                    event.migratedCellCount = migratedCells;
+                    event.migrationTimeSeconds = migrationSeconds;
+                    event.preRebalanceImbalance = preImbalance;
+                    event.postRebalanceImbalance = postImbalance;
+                    event.preRankWorkloads = preRankWorkloads;
+                    event.postRankWorkloads = postRankWorkloads;
+                    event.rootPatchIds = plan.rootPatchIds;
+                    event.ownerRanks = plan.ownerRanks;
+                    diagnostics.loadBalanceEvents.push_back(std::move(event));
+                    ++diagnostics.migrationCount;
+                    diagnostics.migratedPatchCount += migratedPatches;
+                    diagnostics.migratedCellCount += migratedCells;
+                    diagnostics.migrationTimeSeconds += migrationSeconds;
+                    diagnostics.preRebalanceImbalance = preImbalance;
+                    diagnostics.postRebalanceImbalance = postImbalance;
+                    diagnostics.lastRebalanceTimestep = diagnostics.steps;
+                    lastMigrationStep = diagnostics.steps;
+                }
+            }
+        }
+#endif
+        if (options_.collectWorkloadSnapshots ||
+            diagnostics.steps % options_.regridIntervalSteps == 0)
+            collectWorkloadSnapshot(diagnostics.steps, time);
     }
 
+    const double diagnosticsStart = nowSeconds();
     diagnostics.time = time;
     diagnostics.currentTimestep = lastDt;
 #ifdef FLOOD_HAS_MPI
-    if (useMpi) synchronizeOwnedStates(grid, *mpiTopology);
+    if (useMpi) {
+        const double communicationStart = nowSeconds();
+        synchronizeOwnedStates(grid, *mpiTopology);
+        diagnostics.communicationSeconds += nowSeconds() - communicationStart;
+    }
 #endif
     diagnostics.activeLeafCells = 0;
     diagnostics.level0Cells = 0;
@@ -1216,6 +1676,7 @@ AdaptiveDiagnostics AdaptiveSolver::runImpl(AdaptiveGrid& grid,
     }
 #ifdef FLOOD_HAS_MPI
     if (useMpi) {
+        const double communicationStart = nowSeconds();
         reduceAdaptiveCount(diagnostics.activeLeafCells, *mpiTopology,
                             "MPI_Allreduce adaptive active cells");
         reduceAdaptiveCount(diagnostics.level0Cells, *mpiTopology,
@@ -1224,6 +1685,7 @@ AdaptiveDiagnostics AdaptiveSolver::runImpl(AdaptiveGrid& grid,
                             "MPI_Allreduce adaptive level-1 cells");
         reduceAdaptiveCount(diagnostics.level2Cells, *mpiTopology,
                             "MPI_Allreduce adaptive level-2 cells");
+        diagnostics.communicationSeconds += nowSeconds() - communicationStart;
     }
 #endif
     const std::size_t fineCellCount = diagnostics.level1Cells + diagnostics.level2Cells;
@@ -1257,6 +1719,7 @@ AdaptiveDiagnostics AdaptiveSolver::runImpl(AdaptiveGrid& grid,
     diagnostics.finalWaterVolume = finalVolume.value;
 #ifdef FLOOD_HAS_MPI
     if (useMpi) {
+        const double communicationStart = nowSeconds();
         reduceAdaptiveSum(diagnostics.rainfallVolume, *mpiTopology,
                           "MPI_Allreduce adaptive rainfall volume");
         reduceAdaptiveSum(diagnostics.infiltrationVolume, *mpiTopology,
@@ -1288,13 +1751,18 @@ AdaptiveDiagnostics AdaptiveSolver::runImpl(AdaptiveGrid& grid,
                           "MPI_Allreduce adaptive integrated interface flux");
         reduceAdaptiveMax(diagnostics.maximumRegridVolumeDelta, *mpiTopology,
                           "MPI_Allreduce adaptive regrid volume delta");
+        diagnostics.communicationSeconds += nowSeconds() - communicationStart;
     }
 #endif
     diagnostics.massBalanceResidual = diagnostics.initialWaterVolume +
         diagnostics.rainfallVolume - diagnostics.outflowVolume -
         diagnostics.infiltrationVolume - diagnostics.finalWaterVolume;
-    diagnostics.runtimeSeconds = std::chrono::duration<double>(
-        std::chrono::steady_clock::now() - runtimeStart).count();
+    if (diagnostics.workloadSnapshots.empty() ||
+        diagnostics.workloadSnapshots.back().step != diagnostics.steps)
+        collectWorkloadSnapshot(diagnostics.steps, time);
+    diagnostics.rankWorkloads = diagnostics.workloadSnapshots.back().ranks;
+    diagnostics.diagnosticsSeconds = nowSeconds() - diagnosticsStart;
+    diagnostics.runtimeSeconds = nowSeconds() - runtimeStart;
     return diagnostics;
 }
 

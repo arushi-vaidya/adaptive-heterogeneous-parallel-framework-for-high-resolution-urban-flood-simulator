@@ -29,6 +29,7 @@ add_library(flood_core
     src/physics/Rainfall.cpp
     src/solver/SerialSolver.cpp
     src/solver/AdaptiveSolver.cpp
+    src/solver/AdaptiveLoadBalance.cpp
     src/simulation/Scenarios.cpp
     src/io/Output.cpp
     src/io/CsvInput.cpp
@@ -79,6 +80,10 @@ endif()
 add_executable(flood_sim src/main.cpp)
 target_link_libraries(flood_sim PRIVATE flood_core)
 
+add_executable(flood_adaptive_benchmark
+    benchmarks/adaptive/adaptive_benchmark.cpp)
+target_link_libraries(flood_adaptive_benchmark PRIVATE flood_core)
+
 include(CTest)
 if(BUILD_TESTING)
     set(FLOOD_MASS_TOLERANCE "1e-8" CACHE STRING "Absolute mass-balance tolerance in cubic metres for regression tests")
@@ -95,6 +100,11 @@ if(BUILD_TESTING)
     target_compile_definitions(flood_adaptive_solver_tests PRIVATE
         FLOOD_MASS_TOLERANCE=${FLOOD_MASS_TOLERANCE})
     add_test(NAME flood_adaptive_solver_tests COMMAND flood_adaptive_solver_tests)
+    add_executable(flood_adaptive_load_balance_tests
+        tests/test_adaptive_load_balance.cpp)
+    target_link_libraries(flood_adaptive_load_balance_tests PRIVATE flood_core)
+    add_test(NAME flood_adaptive_load_balance_tests
+        COMMAND flood_adaptive_load_balance_tests)
     add_test(NAME flood_config_smoke
         COMMAND flood_sim --config ${CMAKE_CURRENT_SOURCE_DIR}/config/example.ini
                 --output ${CMAKE_CURRENT_BINARY_DIR}/config-smoke-output)

@@ -18,10 +18,10 @@ from pathlib import Path
 
 import numpy as np
 
-SCENARIOS = ("flat-basin", "slope", "dam-break", "rain-drain", "wet-dry")
+SCENARIOS = ("dam-break", "rain-drain", "localized-refinement")
 FIELDS = (
     "scenario", "grid_rows", "grid_cols", "rows", "cols", "backend", "threads",
-    "processes", "serial_runtime", "backend_runtime",
+    "processes", "steps", "serial_runtime", "backend_runtime",
     "serial_wall_runtime", "backend_wall_runtime", "speedup", "efficiency",
     "max_depth_m", "max_depth_difference_m", "max_error", "mean_absolute_error_m",
     "rmse", "relative_error", "max_hu_error_m2_s", "max_hv_error_m2_s",
@@ -39,11 +39,13 @@ FIELDS = (
 
 
 def run_once(binary, backend, scenario, rows, cols, threads, processes, cell_size,
-             directory, timeout, mpi_launcher=None, mpi_numproc_flag="-n",
+             directory, timeout, duration=None, mpi_launcher=None, mpi_numproc_flag="-n",
              mpi_preflags=(), mpi_postflags=()):
     command = [str(binary), "--backend", backend, "--scenario", scenario,
                "--rows", str(rows), "--cols", str(cols), "--cell-size", str(cell_size),
                "--output", str(directory)]
+    if duration is not None:
+        command.extend(("--duration", str(duration)))
     if backend == "openmp":
         command.extend(("--threads", str(threads)))
     elif backend == "mpi":
@@ -123,12 +125,14 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", type=Path, default=Path("build-openmp/flood_sim"))
     parser.add_argument("--scenarios", default=",".join(SCENARIOS))
-    parser.add_argument("--sizes", default="512x512,1024x1024,2048x2048")
-    parser.add_argument("--threads", default="1,2,4,8,16")
-    parser.add_argument("--processes", default="1,2,4,8")
+    parser.add_argument("--sizes", default="512x512,1024x1024")
+    parser.add_argument("--threads", default="1,2,4")
+    parser.add_argument("--processes", default="1,2,4")
     parser.add_argument("--mpi-exec", type=Path)
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--cell-size", type=float, default=5.0)
+    parser.add_argument("--duration", type=float, default=None,
+                        help="override scenario duration in seconds")
     parser.add_argument("--tolerance", type=float, default=1e-8)
     parser.add_argument("--momentum-tolerance", type=float, default=1e-8)
     parser.add_argument("--conservation-tolerance", type=float, default=1e-8)
@@ -147,7 +151,8 @@ def main():
     if args.output.exists() and not args.overwrite:
         parser.error(f"refusing to overwrite existing results: {args.output}; choose a new --output or pass --overwrite")
     if (args.repeats < 1 or args.tolerance < 0 or args.momentum_tolerance < 0 or
-        args.conservation_tolerance < 0 or args.cell_size <= 0):
+        args.conservation_tolerance < 0 or args.cell_size <= 0 or
+        (args.duration is not None and args.duration <= 0)):
         parser.error("repeats/cell size must be positive and tolerances nonnegative")
     scenarios = args.scenarios.split(",")
     if not scenarios or any(name not in SCENARIOS for name in scenarios):
@@ -208,6 +213,7 @@ def main():
         "depth_tolerance_m": args.tolerance,
         "momentum_tolerance_m2_s": args.momentum_tolerance,
         "conservation_tolerance_m3": args.conservation_tolerance,
+        "duration_seconds": args.duration,
     }
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -223,17 +229,60 @@ def main():
                 if ("mpi" in requested_backends and
                     capabilities.get("mpi", {}).get("status") == "AVAILABLE" and mpi_launcher):
                     backend_runs.append(("mpi", processes))
-                if not backend_runs:
-                    continue
                 with tempfile.TemporaryDirectory(prefix="flood-benchmark-") as temp:
                     root = Path(temp)
                     serial_runs = [run_once(binary, "serial", scenario, rows, cols, 1,
-                        1, args.cell_size, root / f"serial-{repeat}", args.timeout)
+                        1, args.cell_size, root / f"serial-{repeat}", args.timeout,
+                        args.duration)
                         for repeat in range(args.repeats)]
                     serial_runtime = statistics.median(run[0] for run in serial_runs)
                     reference_depth = serial_runs[-1][2]
                     reference_hu, reference_hv = serial_runs[-1][3:5]
                     reference_stats = serial_runs[-1][5]
+                    serial_timing = float(serial_runs[-1][5].get("computation_seconds", 0.0) or 0.0)
+                    serial_runtime = statistics.median(run[0] for run in serial_runs)
+                    serial_row = {
+                        "scenario": scenario, "grid_rows": rows, "grid_cols": cols,
+                        "rows": rows, "cols": cols,
+                        "steps": reference_stats.get("steps", ""),
+                        "backend": "serial",
+                        "threads": 1, "processes": 1,
+                        "serial_runtime": serial_runtime,
+                        "backend_runtime": serial_runtime,
+                        "serial_wall_runtime": statistics.median(run[1] for run in serial_runs),
+                        "backend_wall_runtime": statistics.median(run[1] for run in serial_runs),
+                        "speedup": 1.0, "efficiency": 1.0,
+                        "max_depth_m": reference_stats["max_depth_m"],
+                        "max_depth_difference_m": 0.0, "max_error": 0.0,
+                        "mean_absolute_error_m": 0.0, "rmse": 0.0,
+                        "relative_error": 0.0, "max_hu_error_m2_s": 0.0,
+                        "max_hv_error_m2_s": 0.0, "rmse_hu_m2_s": 0.0,
+                        "rmse_hv_m2_s": 0.0, "max_velocity_error_m_s": 0.0,
+                        "flooded_area_m2": reference_stats["flooded_area_m2"],
+                        "flooded_area_difference_m2": 0.0,
+                        "water_volume_m3": reference_stats["stored_m3"],
+                        "water_volume_difference_m3": 0.0,
+                        "conservation_residual_m3": abs(float(reference_stats["mass_residual_m3"])),
+                        "serial_conservation_residual_m3": abs(float(reference_stats["mass_residual_m3"])),
+                        "wet_cells_match": True,
+                        "setup_seconds": reference_stats.get("setup_seconds", ""),
+                        "computation_seconds": reference_stats.get("computation_seconds", serial_timing),
+                        "communication_seconds": 0.0, "synchronization_seconds": 0.0,
+                        "other_seconds": reference_stats.get("other_seconds", ""),
+                        "timing_sum_residual_seconds": "",
+                        "memory_mb": reference_stats["_peak_memory_mb"],
+                        "serial_memory_mb": reference_stats["_peak_memory_mb"],
+                        "tolerance_m": args.tolerance,
+                        "momentum_tolerance_m2_s": args.momentum_tolerance,
+                        "conservation_tolerance_m3": args.conservation_tolerance,
+                        "conservation_pass": abs(float(reference_stats["mass_residual_m3"])) <= args.conservation_tolerance,
+                        "within_tolerance": True, "status": "PASS",
+                        "repetitions": args.repeats, "timestamp_utc": started_at.isoformat(),
+                        "compiler": compiler, "compiler_version": compiler_version,
+                        "operating_system": host["operating_system"], "cpu": host["cpu"],
+                    }
+                    writer.writerow(serial_row)
+                    result_file.flush()
                     for backend, counts_to_run in backend_runs:
                       for parallel_count in counts_to_run:
                         thread_count = parallel_count if backend == "openmp" else 1
@@ -241,6 +290,7 @@ def main():
                         candidate_runs = [run_once(binary, backend, scenario, rows, cols,
                             thread_count, process_count, args.cell_size,
                             root / f"{backend}-{parallel_count}-{repeat}", args.timeout,
+                            args.duration,
                             mpi_launcher, mpi_numproc_flag, mpi_preflags, mpi_postflags)
                             for repeat in range(args.repeats)]
                         runtime = statistics.median(run[0] for run in candidate_runs)
@@ -279,6 +329,7 @@ def main():
                         row = {
                             "scenario": scenario, "grid_rows": rows, "grid_cols": cols,
                             "rows": rows, "cols": cols,
+                            "steps": candidate_stats.get("steps", ""),
                             "backend": backend,
                             "threads": thread_count if backend == "openmp" else "",
                             "processes": process_count if backend == "mpi" else "",

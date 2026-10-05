@@ -1,0 +1,36 @@
+{
+  "started_at_utc": "2026-10-03T13:14:35.786160+00:00",
+  "binary": "/Users/arushivaidya/Desktop/College/sem 7/PAGP/Lab/EL/build-mpi/flood_adaptive_benchmark",
+  "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+  "cpu": "arm",
+  "logical_cpu_count": 8,
+  "scenarios": [
+    "dam-break",
+    "rain-drain",
+    "localized-refinement"
+  ],
+  "backends": [
+    "serial",
+    "openmp",
+    "mpi"
+  ],
+  "thread_counts": [
+    1,
+    2,
+    4
+  ],
+  "process_counts": [
+    1,
+    2,
+    4
+  ],
+  "repeats": 3,
+  "rows": 32,
+  "cols": 32,
+  "patch_extent": 8,
+  "max_level": 2,
+  "cell_size": 1.0,
+  "end_time": 0.12,
+  "mpi_launcher": "/opt/homebrew/bin/mpiexec",
+  "finished_at_utc": "2026-10-03T13:14:55.021635+00:00"
+}

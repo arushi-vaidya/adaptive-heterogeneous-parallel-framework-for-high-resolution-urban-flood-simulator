@@ -1,5 +1,6 @@
 #include "simulation/Scenarios.hpp"
 
+#include <algorithm>
 #include <stdexcept>
 
 namespace flood {
@@ -43,6 +44,16 @@ Scenario makeScenario(const std::string& name, std::size_t rows, std::size_t col
         scenario.config.endTime = 15.0;
         scenario.grid.at(rows / 2, cols / 2).h = 2e-6;
         scenario.grid.at(rows / 2, cols / 2).hu = 1e-7;
+    } else if (name == "localized-refinement") {
+        scenario.rainfall = Rainfall({{0.0, 0.0}});
+        scenario.config.endTime = 10.0;
+        const std::size_t rowBegin = rows / 3;
+        const std::size_t rowEnd = std::min(rows, rowBegin + rows / 5);
+        const std::size_t colBegin = cols / 3;
+        const std::size_t colEnd = std::min(cols, colBegin + cols / 5);
+        for (std::size_t row = rowBegin; row < rowEnd; ++row)
+            for (std::size_t col = colBegin; col < colEnd; ++col)
+                scenario.grid.at(row, col).h = 0.5;
     } else {
         throw std::invalid_argument("Unknown scenario: " + name);
     }

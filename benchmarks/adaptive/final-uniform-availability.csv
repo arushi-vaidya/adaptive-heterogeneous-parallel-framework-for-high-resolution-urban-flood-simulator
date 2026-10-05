@@ -1,0 +1,4 @@
+backend,status,implemented,detail
+serial,AVAILABLE,True,serial reference solver is compiled
+openmp,AVAILABLE,True,OpenMP solver is compiled
+mpi,AVAILABLE,True,MPI solver is compiled

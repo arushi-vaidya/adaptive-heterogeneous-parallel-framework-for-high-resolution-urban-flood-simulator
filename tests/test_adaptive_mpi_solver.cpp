@@ -147,6 +147,17 @@ void compare(const TestCase& testCase, const Outcome& reference,
     check(expectedDiagnostics.coarseFineInterfaceSegments ==
               actualDiagnostics.coarseFineInterfaceSegments,
           testCase.name + ": coarse/fine interface counts differ");
+    check(expectedDiagnostics.workloadSnapshots.size() ==
+              actualDiagnostics.workloadSnapshots.size(),
+          testCase.name + ": workload/timestep history length differs");
+    for (std::size_t index = 0;
+         index < expectedDiagnostics.workloadSnapshots.size(); ++index) {
+        const auto& expected = expectedDiagnostics.workloadSnapshots[index];
+        const auto& actual = actualDiagnostics.workloadSnapshots[index];
+        check(expected.step == actual.step &&
+              std::abs(expected.time - actual.time) <= diagnosticTolerance,
+              testCase.name + ": timestep history differs");
+    }
 
     for (std::size_t index = 0; index < reference.states.size(); ++index) {
         const auto& expected = reference.states[index];
@@ -381,6 +392,198 @@ int main(int argc, char** argv) {
                 grid, deterministic.scenario.rainfall, deterministic.scenario.config);
         });
         compare(deterministic, first, second, maxDifferences, "repeated MPI");
+
+        if (size > 1) {
+            std::vector<TestCase> dynamicCases;
+            auto left = makeCase("dynamic-localized-left", "dam-break",
+                                 16, 16, 4, 1);
+            left.rootPatchToRefine = 4;
+            left.nestedRefinementLevel = 1;
+            left.additionalRefinements = {5};
+            dynamicCases.push_back(left);
+
+            auto right = makeCase("dynamic-localized-right", "dam-break",
+                                  16, 16, 4, 1);
+            right.rootPatchToRefine = 6;
+            right.nestedRefinementLevel = 1;
+            right.additionalRefinements = {7};
+            dynamicCases.push_back(right);
+
+            auto corner = makeCase("dynamic-localized-corner", "dam-break",
+                                   16, 16, 4, 1);
+            corner.rootPatchToRefine = 15;
+            corner.nestedRefinementLevel = 1;
+            corner.additionalRefinements = {14};
+            dynamicCases.push_back(corner);
+
+            auto separated = makeCase("dynamic-separated-regions", "dam-break",
+                                      16, 16, 4, 1);
+            separated.rootPatchToRefine = 0;
+            separated.nestedRefinementLevel = 1;
+            separated.additionalRefinements = {5};
+            dynamicCases.push_back(separated);
+
+            for (TestCase dynamicCase : dynamicCases) {
+                dynamicCase.options.refineThreshold = 1e9;
+                dynamicCase.options.coarsenThreshold = 0.0;
+                dynamicCase.options.collectWorkloadSnapshots = true;
+                TestCase staticCase = dynamicCase;
+                staticCase.options.dynamicLoadBalancing = false;
+                dynamicCase.options.dynamicLoadBalancing = true;
+
+                const Outcome serial = runCase(staticCase, [&](flood::AdaptiveGrid& grid) {
+                    return flood::AdaptiveSolver(staticCase.options).run(
+                        grid, staticCase.scenario.rainfall,
+                        staticCase.scenario.config);
+                });
+                const Outcome staticMpi = runCase(staticCase, [&](flood::AdaptiveGrid& grid) {
+                    return flood::AdaptiveMpiSolver(staticCase.options).run(
+                        grid, staticCase.scenario.rainfall,
+                        staticCase.scenario.config);
+                });
+                const Outcome dynamicMpi = runCase(dynamicCase, [&](flood::AdaptiveGrid& grid) {
+                    return flood::AdaptiveMpiSolver(dynamicCase.options).run(
+                        grid, dynamicCase.scenario.rainfall,
+                        dynamicCase.scenario.config);
+                });
+                const Outcome repeatedDynamic = runCase(
+                    dynamicCase, [&](flood::AdaptiveGrid& grid) {
+                        return flood::AdaptiveMpiSolver(dynamicCase.options).run(
+                            grid, dynamicCase.scenario.rainfall,
+                            dynamicCase.scenario.config);
+                    });
+                compare(dynamicCase, serial, staticMpi, maxDifferences,
+                        "static MPI");
+                compare(dynamicCase, serial, dynamicMpi, maxDifferences,
+                        "dynamic MPI");
+                compare(dynamicCase, dynamicMpi, repeatedDynamic,
+                        maxDifferences, "repeated dynamic MPI");
+                check(dynamicMpi.diagnostics.coarseFineInterfaceSegments > 0 &&
+                      dynamicMpi.diagnostics.maximumInterfaceMassFluxResidual == 0.0,
+                      dynamicCase.name +
+                          ": migration case did not preserve coarse/fine flux conservation");
+                check(dynamicMpi.diagnostics.migrationCount > 0 &&
+                      !dynamicMpi.diagnostics.loadBalanceEvents.empty(),
+                      dynamicCase.name + ": no ownership migration occurred");
+                check(dynamicMpi.diagnostics.migratedPatchCount > 0 &&
+                      dynamicMpi.diagnostics.migratedCellCount > 0,
+                      dynamicCase.name + ": migration moved no active patch work");
+                std::size_t previousMigrationStep = 0;
+                for (const auto& event : dynamicMpi.diagnostics.loadBalanceEvents) {
+                    check(previousMigrationStep == 0 ||
+                              event.timestep >= previousMigrationStep + 10,
+                          dynamicCase.name +
+                              ": migrations violated the ten-step cooldown");
+                    check(event.postRebalanceImbalance <
+                              event.preRebalanceImbalance,
+                          dynamicCase.name +
+                              ": migration did not improve rank-work imbalance");
+                    check(event.preRebalanceImbalance >= 1.20 &&
+                          event.migrationTimeSeconds >= 0.0 &&
+                          event.migratedPatchCount > 0 &&
+                          event.migratedCellCount > 0,
+                          dynamicCase.name +
+                              ": migration diagnostics are incomplete or inconsistent");
+                    previousMigrationStep = event.timestep;
+                }
+                check(dynamicMpi.diagnostics.lastRebalanceTimestep ==
+                          dynamicMpi.diagnostics.loadBalanceEvents.back().timestep &&
+                      dynamicMpi.diagnostics.migrationTimeSeconds >= 0.0,
+                      dynamicCase.name + ": final migration summary is inconsistent");
+                check(dynamicMpi.diagnostics.migrationCount ==
+                          repeatedDynamic.diagnostics.migrationCount &&
+                      dynamicMpi.diagnostics.migratedPatchCount ==
+                          repeatedDynamic.diagnostics.migratedPatchCount &&
+                      dynamicMpi.diagnostics.migratedCellCount ==
+                          repeatedDynamic.diagnostics.migratedCellCount &&
+                      dynamicMpi.diagnostics.lastRebalanceTimestep ==
+                          repeatedDynamic.diagnostics.lastRebalanceTimestep &&
+                      dynamicMpi.diagnostics.loadBalanceEvents.size() ==
+                          repeatedDynamic.diagnostics.loadBalanceEvents.size(),
+                      dynamicCase.name +
+                          ": repeated dynamic migration diagnostics differ");
+                for (std::size_t index = 0;
+                     index < dynamicMpi.diagnostics.loadBalanceEvents.size();
+                     ++index) {
+                    const auto& event =
+                        dynamicMpi.diagnostics.loadBalanceEvents[index];
+                    const auto& repeated =
+                        repeatedDynamic.diagnostics.loadBalanceEvents[index];
+                    check(event.timestep == repeated.timestep &&
+                          event.rootPatchIds == repeated.rootPatchIds &&
+                          event.ownerRanks == repeated.ownerRanks &&
+                          event.migratedPatchCount == repeated.migratedPatchCount &&
+                          event.migratedCellCount == repeated.migratedCellCount,
+                          dynamicCase.name +
+                              ": repeated ownership map or migration timestep differs");
+                }
+            }
+
+            TestCase fewRoots = makeCase(
+                "dynamic-fewer-roots-than-ranks", "flat-basin",
+                8, 8, 8, 1);
+            fewRoots.options.collectWorkloadSnapshots = true;
+            fewRoots.options.refineThreshold = 1e9;
+            fewRoots.options.coarsenThreshold = 0.0;
+            TestCase staticFewRoots = fewRoots;
+            fewRoots.options.dynamicLoadBalancing = true;
+            const Outcome staticReference = runCase(
+                staticFewRoots, [&](flood::AdaptiveGrid& grid) {
+                    return flood::AdaptiveMpiSolver(staticFewRoots.options).run(
+                        grid, staticFewRoots.scenario.rainfall,
+                        staticFewRoots.scenario.config);
+                });
+            const Outcome dynamicFewRoots = runCase(
+                fewRoots, [&](flood::AdaptiveGrid& grid) {
+                    return flood::AdaptiveMpiSolver(fewRoots.options).run(
+                        grid, fewRoots.scenario.rainfall,
+                        fewRoots.scenario.config);
+                });
+            compare(fewRoots, staticReference, dynamicFewRoots,
+                    maxDifferences, "dynamic MPI with fewer roots than ranks");
+            check(dynamicFewRoots.diagnostics.migrationCount == 0,
+                  "A single indivisible root should not trigger a futile migration");
+
+            TestCase balanced = makeCase(
+                "dynamic-balanced-workload", "flat-basin",
+                16, 16, 4, 1);
+            balanced.options.collectWorkloadSnapshots = true;
+            balanced.options.refineThreshold = 1e9;
+            balanced.options.coarsenThreshold = 0.0;
+            balanced.options.dynamicLoadBalancing = true;
+            const Outcome balancedDynamic = runCase(
+                balanced, [&](flood::AdaptiveGrid& grid) {
+                    return flood::AdaptiveMpiSolver(balanced.options).run(
+                        grid, balanced.scenario.rainfall,
+                        balanced.scenario.config);
+                });
+            check(balancedDynamic.diagnostics.migrationCount == 0,
+                  "Dynamic mode must not migrate when imbalance is below threshold");
+        } else {
+            TestCase oneRank = makeCase("dynamic-single-rank", "dam-break",
+                                        16, 16, 4, 2);
+            oneRank.rootPatchToRefine = 0;
+            oneRank.nestedRefinementLevel = 2;
+            oneRank.options.refineThreshold = 1e9;
+            oneRank.options.coarsenThreshold = 0.0;
+            oneRank.options.collectWorkloadSnapshots = true;
+            TestCase staticOneRank = oneRank;
+            oneRank.options.dynamicLoadBalancing = true;
+            const Outcome reference = runCase(staticOneRank, [&](flood::AdaptiveGrid& grid) {
+                return flood::AdaptiveMpiSolver(staticOneRank.options).run(
+                    grid, staticOneRank.scenario.rainfall,
+                    staticOneRank.scenario.config);
+            });
+            const Outcome dynamic = runCase(oneRank, [&](flood::AdaptiveGrid& grid) {
+                return flood::AdaptiveMpiSolver(oneRank.options).run(
+                    grid, oneRank.scenario.rainfall, oneRank.scenario.config);
+            });
+            compare(oneRank, reference, dynamic, maxDifferences,
+                    "single-rank dynamic MPI");
+            check(dynamic.diagnostics.migrationCount == 0 &&
+                  dynamic.diagnostics.loadBalanceEvents.empty(),
+                  "Single-rank dynamic mode must not migrate");
+        }
 
         if (rank == 0) {
             std::cout << std::setprecision(17)
