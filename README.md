@@ -1,87 +1,221 @@
 # Adaptive Heterogeneous Parallel Framework for High-Resolution Urban Flood Simulation
 
-## Phase 1: Serial Reference Baseline
+This repository contains a research implementation of a two-dimensional urban
+flood simulator. It includes a uniform-grid shallow-water solver, adaptive mesh
+refinement (AMR), and Serial, OpenMP, and optional MPI backends. Python utilities
+support benchmark runs, comparisons, plotting, example-data generation, and a
+local web UI. The Python tools orchestrate the C++ solver; simulation physics
+remain in C++.
 
-This repository contains a deterministic, dependency-free C++17 serial shallow-water solver and small Python tools for test data, plotting, output comparison, and a local launch UI. It is a research baseline, not a calibrated urban inundation product. It contains no parallel backend, adaptive mesh refinement, machine learning, or learned prediction.
+The implementation and validation are complete for the features described
+here. This is a research framework, not a calibrated or production flood
+forecasting system. Benchmark measurements are host-specific, and passing
+regression tests does not establish accuracy against field observations.
 
-## Model and Assumptions
+## Features
 
-The conserved state is $U=(h, hu, hv)^T$, where $h$ is water depth in metres and $u,v$ are depth-averaged velocities in metres per second. The bed elevation $z$ is in metres. The equations are
+- First-order finite-volume shallow-water solver with hydrostatic bed
+  reconstruction, Rusanov face fluxes, rainfall, infiltration, Manning
+  friction, wet/dry handling, and closed or outflow boundaries.
+- Serial reference backend and an OpenMP backend. MPI is compiled when a C++
+  MPI toolchain and launcher are available; unavailable backends fail
+  explicitly rather than silently falling back.
+- Adaptive grid with regridding and coarse/fine flux handling. MPI adaptive
+  runs can optionally use dynamic load balancing.
+- Built-in scenarios: `flat-basin`, `slope`, `dam-break`, `rain-drain`, and
+  `wet-dry`. The adaptive benchmark also provides `localized-refinement`.
+- CSV outputs and diagnostics for water depth, momentum, terrain, mass
+  balance, solver timing, and benchmark comparisons.
 
-$$
-\partial_t U + \partial_x F(U) + \partial_y G(U) = S,
-$$
+The conserved state is $U=(h, hu, hv)^T$, with depth $h$ in metres and
+depth-averaged velocities $u,v$ in metres per second. Rainfall CSV time is in
+seconds and intensity in mm/hour; infiltration is in m/s. Terrain CSV files
+contain elevation only, with no header and one row per grid row. See
+[config/example.ini](config/example.ini) for the supported configuration-file
+format.
 
-with $F=(hu, hu^2+gh^2/2, huv)^T$, $G=(hv, huv, hv^2+gh^2/2)^T$. Rain adds $r$ to the depth equation. Infiltration removes water at a configured constant rate, capped by available depth. Manning friction is an implicit local momentum damping, with factor $1/(1+\Delta t g n^2 |V|/h^{4/3})$. Momentum is set to zero at or below the dry-depth threshold.
+## Requirements
 
-The solver is first-order finite volume on a uniform Cartesian grid. At faces it uses hydrostatic reconstruction over the higher adjacent bed followed by a Rusanov (local Lax-Friedrichs) flux and side-specific hydrostatic pressure corrections. This balances a lake at rest over a bed step to first order. There is no high-order reconstruction or slope limiting. The timestep obeys the two-dimensional gravity-wave CFL estimate and is clipped to the next rainfall breakpoint and the configured maximum. A cell-based outgoing-water limiter reduces face fluxes when a step could drain more water than the donor stores; it preserves mass but adds diffusion near wet/dry fronts. Floating-point calculations use IEEE double precision and fixed serial iteration order; cross-compiler bitwise identity is not promised.
+- CMake 3.16 or newer and a C++17 compiler.
+- OpenMP and MPI are optional. CMake detects available toolchains when their
+  options are enabled (both are enabled by default).
+- Python 3.8 or newer for the Python tools. The core executable does not
+  require Python. NumPy is needed for benchmark/comparison tools; Matplotlib
+  is needed to render plots and flood maps. The local UI uses Python's standard
+  library.
 
-Rainfall CSV time is seconds and intensity is mm/hour; conversion to m/s is `intensity / 1000 / 3600`. Values are piecewise constant from their timestamp up to the next timestamp; rain before the first timestamp uses the first value. Infiltration is m/s. Grid coordinates are cell-centred in a uniform grid; terrain CSV contains elevation only, without a header, one row per grid row. The outflow boundary uses zero-gradient extrapolation for outward flow and reflected normal momentum to suppress inflow. Closed boundaries have zero normal flux.
+## Build and test
 
-Mass accounting reports `initial + rainfall - outflow - infiltration - final` in cubic metres. This is a diagnostic, not a proof of solution accuracy. It does not account for external sources other than rainfall or initial water.
-
-## Architecture
-
-```text
-Scenario / CLI / Python UI
-          |
-Simulation inputs + SolverConfig
-          |
-SolverBackend interface ---- SerialSolver
-          |                     |-- finite-volume face fluxes
-CSV I/O + diagnostics          |-- source terms and CFL step
-          |                     |-- mass budget
-CSV outputs + Python plots
-```
-
-`include/grid` owns the structured grid and conserved cell state. `include/physics` owns rainfall representation. `include/solver` defines backend/configuration and the serial numerical method. `include/simulation` builds reproducible initial conditions. `include/io` handles CSV and output. The UI is only a subprocess client; no physics is in Python. Future backends can implement `SolverBackend`, while sharing the same grid and physical parameters; distributed-memory layouts will likely require a later grid-view interface.
-
-## Build and Run
-
-Requirements: CMake 3.16+, C++17 compiler, Python 3.8+. Python plotting/comparison scripts additionally require NumPy and Matplotlib.
+From the repository root:
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j
+cmake --build build -j2
 ctest --test-dir build --output-on-failure
-./build/flood_sim --scenario flat-basin --rows 64 --cols 64 --duration 60 --output output/flat
+./build/flood_sim --capabilities
 ```
 
-The conservation regression tolerance defaults to `1e-8` m³ and can be changed with `-DFLOOD_MASS_TOLERANCE=<value>` at CMake configure time. This is an absolute numerical test threshold, not an accuracy specification.
-
-Scenario names: `flat-basin`, `slope`, `dam-break`, `rain-drain`, `wet-dry`. CLI options include `--terrain path.csv`, `--rainfall path.csv`, `--cell-size metres`, `--duration seconds`, `--output directory`, and physics controls `--gravity`, `--manning`, `--infiltration`, `--cfl`, `--max-dt`, `--dry-depth`, and `--boundary closed|outflow`. `--config config/example.ini` reads key/value configuration; later CLI arguments override matching settings. External terrain and rainfall can be combined with a built-in scenario; terrain CSV dimensions override `--rows`/`--cols`.
-
-Rainfall and terrain examples can be generated with `python3 scripts/generate_rainfall.py` and `python3 scripts/generate_test_terrain.py`. To plot outputs, run `python3 scripts/visualize_results.py --terrain output/flat/terrain.csv --depth output/flat/depth.csv`. Compare depth grids with `python3 scripts/compare_outputs.py reference.csv candidate.csv --cell-size 5`.
-
-Run the local UI after building the selected backend executable with `python3 scripts/ui.py`, then open http://127.0.0.1:8000. The UI offers Serial, OpenMP, and MPI, launches a serial reference and selected-backend run, then presents measured metrics and a depth canvas. MPI selection requires an MPI-enabled binary and launcher. The UI currently offers built-in benchmark scenarios; arbitrary file upload is not implemented.
-
-## Scenarios and Validation
-
-1. **Flat basin:** uniform zero bed, constant 30 mm/hour rain, closed walls. Expected: spatially uniform depth rise; compare stored volume with rainfall input.
-2. **Simple slope:** descending bed with a shallow strip of water at the high end, no rain, closed walls. Expected: water moves downslope; verify cells below the release wet and total water remains constant.
-3. **Dam break:** one-metre initial water on the left half, dry on the right, no rain, closed walls. Expected: a front propagates into initially dry cells with nonnegative depth.
-4. **Rainfall + drainage:** rainfall changes from 60 to 0 mm/hour at 30 s, positive infiltration, sloped bed, open boundaries. Expected: rainfall and infiltration are in the budget and any boundary loss is reported.
-5. **Wet/dry transition:** a single shallow moving patch on a dry grid. Expected: finite velocity and nonnegative depths.
-
-CTest runs all five cases, checks volume balance, downhill/front propagation, wet/dry stability, and output generation. These are regression checks, not comparison to analytical benchmarks or field observations. Before publication, add convergence studies, dam-break reference solutions, lake-at-rest equilibrium tests over non-flat beds, independent boundary-flux checks, and calibration/validation against measured data.
-
-Outputs per run: `terrain.csv`, conserved `depth.csv`, `hu.csv`, `hv.csv`, `stats.csv`, and `benchmark.csv`. The benchmark separates scenario/input preparation, solver, and output wall time; it is a local performance record, not a performance claim. `stats.csv` contains final time, steps, volumes, mass residual, maximum depth/velocity, wet cells, flooded area, backend, and thread count. Comparison reports depth errors, relative error, signed volume/flood-area differences, and optional momentum errors under separate configurable tolerances. PNG rendering requires the optional Python packages noted above.
-
-## Phase 2 Status
-
-`SolverBackend` remains the dispatch boundary. The supported backend choices are Serial, OpenMP, and MPI. Serial is the default reference; OpenMP shares the same numerical kernels and passes parity checks at 1/2/4/8/16 threads. MPI is conditionally compiled when an MPI C++ toolchain is found and was built and experimentally validated here with Open MPI 5.0.11. CMake's `FLOOD_ENABLE_MPI` option is optional, and `./build-mpi/flood_sim --capabilities` reports source, toolchain, and runtime status.
-
-Build and run OpenMP with:
+CMake enables OpenMP and probes for MPI by default. If either backend is not
+available in the environment, the build still supports the backends that were
+found. To request a serial-only build:
 
 ```sh
-cmake -S . -B build-openmp -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release -DFLOOD_ENABLE_OPENMP=ON
-cmake --build build-openmp -j
-ctest --test-dir build-openmp --output-on-failure
-./build-openmp/flood_sim --backend openmp --threads 8 --scenario dam-break --rows 512 --cols 512
+cmake -S . -B build-serial \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DFLOOD_ENABLE_OPENMP=OFF -DFLOOD_ENABLE_MPI=OFF
+cmake --build build-serial -j2
 ```
 
-On this Mac, OpenMP uses Homebrew `libomp` if CMake does not discover it through `FindOpenMP`. Use `--backend serial` or `--backend openmp --threads N`; unavailable backends fail explicitly and never fall back. Numerical output comparison uses `-DFLOOD_NUMERICAL_TOLERANCE=1e-8` for depth and `-DFLOOD_MOMENTUM_TOLERANCE=1e-8` for each momentum component. The script equivalents are `--tolerance` and `--momentum-tolerance`.
+On macOS, OpenMP may require Homebrew `libomp`; the CMake configuration checks
+the standard Homebrew location when `FindOpenMP` cannot locate it. For MPI,
+install an MPI C++ toolchain and launcher, then configure with
+`-DFLOOD_ENABLE_MPI=ON`. Check the detected capabilities with
+`./build/flood_sim --capabilities` or `./build/flood_sim --list-backends`.
 
-The final validation table, environment, benchmark measurements, and remaining Phase 2 work are in [docs/phase2.md](docs/phase2.md). Measured OpenMP and MPI data and plotting commands are documented in [benchmarks/README.md](benchmarks/README.md) and [benchmarks/mpi/README.md](benchmarks/mpi/README.md); backend details are in [docs/phase2_architecture.md](docs/phase2_architecture.md), [docs/openmp_design.md](docs/openmp_design.md), and [docs/mpi_design.md](docs/mpi_design.md).
+## Run without Python scripts
 
-Adaptive MPI dynamic load balancing is opt-in through `AdaptiveSolverOptions::dynamicLoadBalancing`; static ownership remains the default. At synchronized timestep/regrid barriers, the solver uses active leaf-cell counts per row-major root subtree, a default 1.20 imbalance threshold, and a default 10-step cooldown. The adaptive benchmark accepts `--dynamic-load-balancing true`, `--imbalance-threshold N`, and `--rebalance-cooldown N` with the MPI backend and reports migration counts, migrated work, timing, and pre/post imbalance. Because the current MPI implementation keeps a replicated hierarchy on every rank, migration synchronizes owner-authoritative active state and cached activity depths before changing the root-owner map; owner-dependent face/communication plans are rebuilt for the next timestep. The finite-volume update and coarse/fine flux formulation are unchanged. This capability is correctness-tested, not a final production benchmark study.
+Run the uniform-grid solver directly:
+
+```sh
+./build/flood_sim \
+  --scenario dam-break --rows 128 --cols 128 \
+  --duration 60 --output output/dam-break
+```
+
+The default backend is Serial. Choose another compiled backend explicitly:
+
+```sh
+./build/flood_sim --backend openmp --threads 4 \
+  --scenario rain-drain --rows 256 --cols 256 \
+  --duration 60 --output output/rain-drain-openmp
+```
+
+For MPI, launch the executable with the MPI launcher available on your system:
+
+```sh
+mpiexec -n 4 ./build/flood_sim --backend mpi \
+  --scenario dam-break --rows 256 --cols 256 \
+  --duration 60 --output output/dam-break-mpi
+```
+
+Configure a uniform-grid run with a key/value file, or override configuration
+values on the command line (command-line values take precedence):
+
+```sh
+./build/flood_sim --config config/example.ini
+./build/flood_sim --config config/example.ini \
+  --backend openmp --threads 4 --output output/example-openmp
+```
+
+`flood_sim --help` lists its command-line options. These include
+`--terrain` and `--rainfall` for input CSVs, `--cell-size`, and physical
+parameters such as `--gravity`, `--manning`, `--infiltration`, `--cfl`,
+`--max-dt`, `--dry-depth`, and `--boundary closed|outflow`. The executable
+writes `terrain.csv`, `depth.csv`, `hu.csv`, `hv.csv`, `stats.csv`, and
+`benchmark.csv` in the selected output directory.
+
+Run the adaptive solver directly with the adaptive benchmark executable:
+
+```sh
+./build/flood_adaptive_benchmark \
+  --backend serial --scenario localized-refinement \
+  --rows 64 --cols 64 --patch-extent 8 --max-level 2 \
+  --end-time 0.2 --output-dir output/adaptive
+```
+
+It prints a CSV summary to standard output and writes adaptive maps to the
+requested output directory. Use `--backend openmp --threads N` for OpenMP. For
+MPI, launch it with `mpiexec -n N` and `--backend mpi`. Optional MPI dynamic
+load balancing is controlled by `--dynamic-load-balancing true`, with
+`--imbalance-threshold` and `--rebalance-cooldown` tuning options.
+
+## Run with Python scripts
+
+The scripts below are optional convenience tools; the C++ executable can be
+built and run without them. Run commands from the repository root.
+
+Generate example rainfall and terrain inputs:
+
+```sh
+python3 scripts/generate_rainfall.py --output output/rainfall.csv
+python3 scripts/generate_test_terrain.py \
+  --kind bowl --rows 64 --cols 64 --output output/terrain.csv
+```
+
+Use those files with the uniform-grid solver:
+
+```sh
+./build/flood_sim --terrain output/terrain.csv \
+  --rainfall output/rainfall.csv --duration 60 \
+  --output output/custom-run
+```
+
+Run a small uniform-grid benchmark matrix (requires NumPy). The runner compares
+the selected backend runs against Serial, validates output and conservation,
+and writes measured CSV results and a metadata sidecar:
+
+```sh
+python3 scripts/run_benchmarks.py --binary build/flood_sim \
+  --backends serial,openmp --scenarios dam-break \
+  --sizes 64x64 --threads 1,2 --repeats 1 \
+  --output benchmarks/openmp/readme-example.csv
+```
+
+For AMR benchmarks, use `scripts/run_adaptive_benchmarks.py`. This example
+runs only Serial, so it does not require an MPI launcher:
+
+```sh
+python3 scripts/run_adaptive_benchmarks.py \
+  --binary build/flood_adaptive_benchmark \
+  --backends serial --scenarios localized-refinement \
+  --rows 64 --cols 64 --repeats 1 \
+  --output benchmarks/adaptive/readme-example.csv
+```
+
+To visualize a completed uniform-grid run (requires Matplotlib):
+
+```sh
+python3 scripts/visualize_results.py \
+  --terrain output/custom-run/terrain.csv \
+  --depth output/custom-run/depth.csv \
+  --output output/custom-run/flood_map.png
+```
+
+Compare two depth grids with `scripts/compare_outputs.py` (requires NumPy):
+
+```sh
+python3 scripts/compare_outputs.py \
+  reference/depth.csv candidate/depth.csv --cell-size 5
+```
+
+The local UI offers backend and scenario selection, runs comparisons, and
+displays measured results. It uses the `build-mpi/` executable paths, so build
+that directory first:
+
+```sh
+cmake -S . -B build-mpi -DCMAKE_BUILD_TYPE=Release \
+  -DFLOOD_ENABLE_MPI=ON
+cmake --build build-mpi -j2
+python3 scripts/ui.py
+```
+
+Then open <http://127.0.0.1:8000>. The UI binds to the local machine; available
+backends depend on the detected toolchains and executables in `build-mpi/`.
+
+## Validation and further information
+
+CTest covers solver, backend, adaptive-grid, load-balancing, and configuration
+regressions. MPI-specific tests are included when CMake detects MPI. See
+[docs/phase2.md](docs/phase2.md) for validation details and the tested
+environment; [benchmarks/README.md](benchmarks/README.md) and
+[benchmarks/mpi/README.md](benchmarks/mpi/README.md) document recorded uniform
+grid measurements. Architecture and backend details are in
+[docs/phase2_architecture.md](docs/phase2_architecture.md),
+[docs/openmp_design.md](docs/openmp_design.md), and
+[docs/mpi_design.md](docs/mpi_design.md).
+
+The mass-balance residual is a diagnostic and the test tolerance is a
+regression threshold, not an accuracy specification. The solver uses
+first-order reconstruction on a uniform grid for the non-adaptive path; it
+does not provide a calibrated inundation forecast. Validate and calibrate
+against suitable reference data before using results for operational decisions.

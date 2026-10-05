@@ -160,6 +160,8 @@ def main():
             stats["maximum_interface_mass_flux_residual"] <= args.conservation_tolerance)
         summary = {
             "backend": args.backend, "threads": thread_count,
+            "scenario": args.scenario, "rows": args.rows, "cols": args.cols,
+            "cell_size_m": 1.0,
             "processes": rank_count, "adaptive": True,
             "max_level": args.max_level,
             "dynamic_load_balancing": args.dynamic_load_balancing,
@@ -207,6 +209,8 @@ def main():
                          reference_residual <= args.conservation_tolerance)
     summary = {
         "backend": args.backend,
+        "scenario": args.scenario, "rows": args.rows, "cols": args.cols,
+        "cell_size_m": 5.0,
         "threads": int(candidate_time["threads"]),
         "processes": int(candidate_time.get("processes", 1)),
         "serial_runtime": serial_seconds,
