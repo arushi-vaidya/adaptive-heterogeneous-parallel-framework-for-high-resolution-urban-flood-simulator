@@ -416,7 +416,7 @@ Diagnostics MpiSolver::run(Grid& grid, const Rainfall& rainfall,
 
     double communicationSeconds = 0.0, synchronizationSeconds = 0.0, computationSeconds = 0.0;
     CompensatedSum rainfallLocalSum, infiltrationLocalSum, outflowLocalSum;
-    double time = 0.0;
+    double time = config.startTime;
     std::size_t steps = 0;
     double syncStart = 0.0;
     while (time < config.endTime) {

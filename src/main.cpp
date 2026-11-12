@@ -2,6 +2,7 @@
 #include "simulation/Scenarios.hpp"
 #include "solver/BackendCapabilities.hpp"
 #include "solver/SerialSolver.hpp"
+#include "solver/AcceleratorSolvers.hpp"
 
 #ifdef FLOOD_HAS_OPENMP
 #include "solver/OpenMPSolver.hpp"
@@ -17,6 +18,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 int main(int argc, char** argv) {
     try {
@@ -27,6 +29,9 @@ int main(int argc, char** argv) {
         std::size_t rows = 32, cols = 32;
         double cellSize = 5.0, duration = -1.0;
         int threads = 0;
+        int frames = 0;
+        flood::ScenarioOptions scenarioOptions;
+        double rainIntensity = -1.0, rainDuration = -1.0, infiltrationMmPerHour = -1.0;
         std::map<std::string, std::string> physicsOptions;
         auto applyConfigValue = [&](const std::string& key, const std::string& value) {
             if (key == "scenario") scenarioName = value;
@@ -39,6 +44,14 @@ int main(int argc, char** argv) {
             else if (key == "rainfall") rainfallPath = value;
             else if (key == "backend") backendName = value;
             else if (key == "threads") threads = std::stoi(value);
+            else if (key == "frames") frames = std::stoi(value);
+            else if (key == "surge-height") scenarioOptions.surgeHeight = std::stod(value);
+            else if (key == "reservoir-depth") scenarioOptions.reservoirDepth = std::stod(value);
+            else if (key == "pond-depth") scenarioOptions.pondDepth = std::stod(value);
+            else if (key == "breach-width") scenarioOptions.breachWidth = std::stod(value);
+            else if (key == "rain-intensity") rainIntensity = std::stod(value);
+            else if (key == "rain-duration") rainDuration = std::stod(value);
+            else if (key == "infiltration-mm-h") infiltrationMmPerHour = std::stod(value);
             else if (key == "gravity" || key == "manning" || key == "infiltration" ||
                      key == "cfl" || key == "max-dt" || key == "dry-depth" ||
                      key == "boundary") physicsOptions[key] = value;
@@ -82,6 +95,11 @@ int main(int argc, char** argv) {
             else if (arg == "--rainfall" && i + 1 < argc) rainfallPath = argv[++i];
             else if (arg == "--backend" && i + 1 < argc) backendName = argv[++i];
             else if (arg == "--threads" && i + 1 < argc) threads = std::stoi(argv[++i]);
+            else if (arg == "--frames" && i + 1 < argc) frames = std::stoi(argv[++i]);
+            else if ((arg == "--surge-height" || arg == "--reservoir-depth" || arg == "--pond-depth" || arg == "--breach-width" ||
+                      arg == "--rain-intensity" || arg == "--rain-duration" ||
+                      arg == "--infiltration-mm-h") && i + 1 < argc)
+                applyConfigValue(arg.substr(2), argv[++i]);
             else if (arg == "--rows" && i + 1 < argc) rows = std::stoul(argv[++i]);
             else if (arg == "--cols" && i + 1 < argc) cols = std::stoul(argv[++i]);
             else if (arg == "--cell-size" && i + 1 < argc) cellSize = std::stod(argv[++i]);
@@ -93,16 +111,19 @@ int main(int argc, char** argv) {
                 physicsOptions[key] = argv[++i];
             }
             else if (arg == "--help") {
-                std::cout << "Usage: flood_sim [--config FILE] [--backend serial|openmp|mpi --threads N] "
+                std::cout << "Usage: flood_sim [--config FILE] [--backend serial|openmp|mpi|cuda|openacc --threads N] "
                              "[--scenario NAME --rows N --cols N "
-                             "--cell-size M --duration SEC --output DIR] [--terrain CSV "
+                             "--cell-size M --duration SEC --output DIR --frames N] [--terrain CSV "
                              "--rainfall CSV] [--gravity G --manning N --infiltration MPS "
                              "--cfl C --max-dt SEC --dry-depth M --boundary closed|outflow]\n";
                 return 0;
             } else throw std::invalid_argument("Unknown or incomplete argument: " + arg);
         }
         const auto preprocessingStart = std::chrono::steady_clock::now();
-        auto scenario = flood::makeScenario(scenarioName, rows, cols, cellSize);
+        auto scenario = flood::makeScenario(scenarioName, rows, cols, cellSize, scenarioOptions);
+        if (rainIntensity >= 0.0) scenario.rainfall = flood::constantStorm(rainIntensity, rainDuration);
+        if (infiltrationMmPerHour >= 0.0)
+            scenario.config.infiltrationMetersPerSecond = infiltrationMmPerHour / 1000.0 / 3600.0;
         for (const auto& option : physicsOptions) {
             if (option.first == "gravity") scenario.config.gravity = std::stod(option.second);
             else if (option.first == "manning") scenario.config.manningN = std::stod(option.second);
@@ -124,38 +145,115 @@ int main(int argc, char** argv) {
         }
         if (!rainfallPath.empty()) scenario.rainfall = flood::readRainfallCsv(rainfallPath);
         if (duration >= 0.0) scenario.config.endTime = duration;
+        if (frames < 0 || frames > 240) throw std::invalid_argument("--frames must be between 0 and 240");
+        if (!terrainPath.empty()) scenario.landUse.clear();
+        if (frames > 0 && backendName == "mpi")
+            throw std::invalid_argument("--frames is not supported with the MPI backend "
+                                        "(MPI is initialised and finalised once per solver run)");
         const double preprocessingSeconds = std::chrono::duration<double>(
             std::chrono::steady_clock::now() - preprocessingStart).count();
         std::cout << "Simulation started\nGrid: " << rows << " x " << cols
                   << "\nCell size: " << cellSize << " m\nBoundary: "
                   << flood::toString(scenario.config.boundary) << "\nBackend: "
                   << backendName << '\n';
-        flood::Diagnostics diagnostics;
-        if (backendName == "serial") {
-            diagnostics = flood::SerialSolver().run(
-                scenario.grid, scenario.rainfall, scenario.config);
-        } else if (backendName == "openmp") {
+        auto runSolver = [&](const flood::SolverConfig& config) -> flood::Diagnostics {
+            if (backendName == "serial")
+                return flood::SerialSolver().run(scenario.grid, scenario.rainfall, config);
+            if (backendName == "openmp") {
 #ifdef FLOOD_HAS_OPENMP
-            diagnostics = flood::OpenMPSolver(threads).run(
-                scenario.grid, scenario.rainfall, scenario.config);
+                return flood::OpenMPSolver(threads).run(scenario.grid, scenario.rainfall, config);
 #else
-            throw std::runtime_error("OpenMP backend unavailable in this build; configure with libomp");
+                throw std::runtime_error("OpenMP backend unavailable in this build; configure with libomp");
 #endif
-    } else if (backendName == "mpi") {
+            }
+            if (backendName == "mpi") {
 #if defined(FLOOD_HAS_MPI) && defined(FLOOD_MPI_RUNTIME_FOUND)
-        diagnostics = flood::MpiSolver().run(
-        scenario.grid, scenario.rainfall, scenario.config);
+                return flood::MpiSolver().run(scenario.grid, scenario.rainfall, config);
 #elif defined(FLOOD_HAS_MPI)
-            throw std::runtime_error("MPI solver is compiled, but no MPI launcher/runtime was detected");
+                throw std::runtime_error("MPI solver is compiled, but no MPI launcher/runtime was detected");
 #else
-        throw std::runtime_error(flood::backendUnavailableReason(backendName));
+                throw std::runtime_error(flood::backendUnavailableReason(backendName));
 #endif
-        } else {
+            }
+            if (backendName == "cuda")
+                return flood::CudaSolver().run(scenario.grid, scenario.rainfall, config);
+            if (backendName == "openacc")
+                return flood::OpenACCSolver().run(scenario.grid, scenario.rainfall, config);
             throw std::runtime_error(flood::backendUnavailableReason(backendName));
+        };
+
+        // Time-lapse: split the run into equal segments and snapshot h, hu, hv
+        // after each one. Solver timings and volume budgets are summed over
+        // segments, so the reported diagnostics describe the whole run.
+        std::vector<float> frameData;
+        std::vector<double> frameTimes;
+        const auto captureFrame = [&](double time) {
+            frameTimes.push_back(time);
+            for (const auto& cell : scenario.grid.cells()) frameData.push_back(static_cast<float>(cell.h));
+            for (const auto& cell : scenario.grid.cells()) frameData.push_back(static_cast<float>(cell.hu));
+            for (const auto& cell : scenario.grid.cells()) frameData.push_back(static_cast<float>(cell.hv));
+        };
+        flood::Diagnostics diagnostics;
+        if (frames <= 0) {
+            diagnostics = runSolver(scenario.config);
+        } else {
+            const double area = scenario.grid.dx() * scenario.grid.dy();
+            double initialVolume = 0.0;
+            for (const auto& cell : scenario.grid.cells()) initialVolume += cell.h * area;
+            const double begin = scenario.config.startTime, finish = scenario.config.endTime;
+            flood::Diagnostics total;
+            captureFrame(begin);
+            for (int k = 1; k <= frames; ++k) {
+                flood::SolverConfig segment = scenario.config;
+                segment.startTime = begin + (finish - begin) * (k - 1) / frames;
+                segment.endTime = k == frames ? finish : begin + (finish - begin) * k / frames;
+                const auto part = runSolver(segment);
+                const std::size_t steps = total.steps + part.steps;
+                const double seconds[] = {total.solverSeconds + part.solverSeconds,
+                    total.setupSeconds + part.setupSeconds,
+                    total.computationSeconds + part.computationSeconds,
+                    total.communicationSeconds + part.communicationSeconds,
+                    total.synchronizationSeconds + part.synchronizationSeconds,
+                    total.otherSeconds + part.otherSeconds};
+                const double volumes[] = {total.rainfallVolume + part.rainfallVolume,
+                    total.outflowVolume + part.outflowVolume,
+                    total.infiltrationVolume + part.infiltrationVolume};
+                total = part;
+                total.steps = steps;
+                total.solverSeconds = seconds[0]; total.setupSeconds = seconds[1];
+                total.computationSeconds = seconds[2]; total.communicationSeconds = seconds[3];
+                total.synchronizationSeconds = seconds[4]; total.otherSeconds = seconds[5];
+                total.rainfallVolume = volumes[0]; total.outflowVolume = volumes[1];
+                total.infiltrationVolume = volumes[2];
+                if (part.isRoot) captureFrame(segment.endTime);
+            }
+            total.massResidual = initialVolume + total.rainfallVolume - total.outflowVolume -
+                                 total.infiltrationVolume - total.storedVolume;
+            diagnostics = total;
         }
     if (!diagnostics.isRoot) return EXIT_SUCCESS;
         const auto outputStart = std::chrono::steady_clock::now();
         flood::writeOutputs(scenario.grid, diagnostics, output);
+        if (!frameTimes.empty()) {
+            std::ofstream bin(std::filesystem::path(output) / "frames.bin", std::ios::binary);
+            bin.write(reinterpret_cast<const char*>(frameData.data()),
+                      static_cast<std::streamsize>(frameData.size() * sizeof(float)));
+            std::ofstream meta(std::filesystem::path(output) / "frames.json");
+            meta << "{\"rows\":" << scenario.grid.rows() << ",\"cols\":" << scenario.grid.cols()
+                 << ",\"cell_size_m\":" << scenario.grid.dx()
+                 << ",\"fields\":[\"h\",\"hu\",\"hv\"],\"dtype\":\"float32-le\",\"times\":[";
+            for (std::size_t i = 0; i < frameTimes.size(); ++i) meta << (i ? "," : "") << frameTimes[i];
+            meta << "]}\n";
+            if (!bin || !meta) throw std::runtime_error("Failed writing time-lapse frames");
+        }
+        if (!scenario.landUse.empty() && terrainPath.empty()) {
+            std::ofstream landUse(std::filesystem::path(output) / "landuse.csv");
+            for (std::size_t r = 0; r < scenario.grid.rows(); ++r) {
+                for (std::size_t c = 0; c < scenario.grid.cols(); ++c)
+                    landUse << (c ? "," : "") << static_cast<int>(scenario.landUse[r * scenario.grid.cols() + c]);
+                landUse << '\n';
+            }
+        }
         const double outputSeconds = std::chrono::duration<double>(
             std::chrono::steady_clock::now() - outputStart).count();
         std::ofstream benchmark(std::filesystem::path(output) / "benchmark.csv");

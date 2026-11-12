@@ -7,6 +7,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(FLOOD_ENABLE_OPENMP "Build the OpenMP solver backend when a runtime is available" ON)
 option(FLOOD_ENABLE_MPI "Probe for an optional MPI toolchain" ON)
+option(FLOOD_ENABLE_CUDA "Build the CUDA backend when a CUDA toolchain is available" ON)
+option(FLOOD_ENABLE_OPENACC "Build the OpenACC backend when the compiler supports OpenACC" ON)
 set(FLOOD_NUMERICAL_TOLERANCE "1e-8" CACHE STRING "Absolute depth tolerance for backend comparisons, in metres")
 set(FLOOD_MOMENTUM_TOLERANCE "1e-8" CACHE STRING "Absolute momentum tolerance for backend comparisons, in m^2/s")
 
@@ -77,6 +79,47 @@ if(FLOOD_MPI_TOOLCHAIN_FOUND)
     target_compile_definitions(flood_core PUBLIC FLOOD_HAS_MPI=1)
 endif()
 
+# OpenACC backend. The source is always compiled: without OpenACC support the
+# directives are ignored and the loop nest runs on the host, which lets the
+# shared accelerator kernels be regression-tested on any machine. The backend
+# is only reported runnable (FLOOD_HAS_OPENACC) when the compiler supports it.
+target_sources(flood_core PRIVATE src/openacc/OpenACCSolver.cpp)
+if(FLOOD_ENABLE_OPENACC)
+    find_package(OpenACC QUIET)
+    if(OpenACC_CXX_FOUND)
+        set_source_files_properties(src/openacc/OpenACCSolver.cpp PROPERTIES
+            COMPILE_OPTIONS "${OpenACC_CXX_FLAGS}")
+        target_link_options(flood_core PUBLIC ${OpenACC_CXX_FLAGS})
+        target_compile_definitions(flood_core PUBLIC FLOOD_HAS_OPENACC=1)
+        message(STATUS "OpenACC support detected: ${OpenACC_CXX_FLAGS}")
+    else()
+        set_source_files_properties(src/openacc/OpenACCSolver.cpp PROPERTIES
+            COMPILE_OPTIONS "-Wno-unknown-pragmas")
+        message(STATUS "OpenACC unavailable: backend source is built for host testing only")
+    endif()
+endif()
+
+# CUDA backend, built only when a CUDA compiler is present.
+set(FLOOD_CUDA_FOUND FALSE)
+if(FLOOD_ENABLE_CUDA)
+    include(CheckLanguage)
+    check_language(CUDA)
+    if(CMAKE_CUDA_COMPILER)
+        enable_language(CUDA)
+        set(FLOOD_CUDA_FOUND TRUE)
+    endif()
+endif()
+if(FLOOD_CUDA_FOUND)
+    set(CMAKE_CUDA_STANDARD 17)
+    target_sources(flood_core PRIVATE src/cuda/CudaSolver.cu)
+    set_target_properties(flood_core PROPERTIES CUDA_ARCHITECTURES "70;80;86")
+    target_compile_definitions(flood_core PUBLIC FLOOD_HAS_CUDA=1)
+    message(STATUS "CUDA toolchain detected: ${CMAKE_CUDA_COMPILER}")
+else()
+    target_sources(flood_core PRIVATE src/cuda/CudaUnavailable.cpp)
+    message(STATUS "CUDA unavailable: CUDA backend source exists but nvcc was not found")
+endif()
+
 add_executable(flood_sim src/main.cpp)
 target_link_libraries(flood_sim PRIVATE flood_core)
 
@@ -108,6 +151,9 @@ if(BUILD_TESTING)
     add_test(NAME flood_config_smoke
         COMMAND flood_sim --config ${CMAKE_CURRENT_SOURCE_DIR}/config/example.ini
                 --output ${CMAKE_CURRENT_BINARY_DIR}/config-smoke-output)
+    add_executable(flood_accelerator_kernel_tests tests/test_accelerator_kernels.cpp)
+    target_link_libraries(flood_accelerator_kernel_tests PRIVATE flood_core)
+    add_test(NAME flood_accelerator_kernel_tests COMMAND flood_accelerator_kernel_tests)
     add_executable(flood_capability_tests tests/test_capabilities.cpp)
     target_link_libraries(flood_capability_tests PRIVATE flood_core)
     add_test(NAME flood_capability_tests COMMAND flood_capability_tests)

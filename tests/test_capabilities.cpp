@@ -6,7 +6,7 @@
 
 int main() {
     const auto capabilities = flood::backendCapabilities();
-    if (capabilities.size() != 3 || capabilities[0].name != "serial" ||
+    if (capabilities.size() != 5 || capabilities[0].name != "serial" ||
         capabilities[0].status != "AVAILABLE" || !capabilities[0].implemented) {
         throw std::runtime_error("Serial capability must be available and implemented");
     }
@@ -40,8 +40,22 @@ int main() {
         throw std::runtime_error("MPI without its source was reported runnable");
 #endif
 #endif
+#ifdef FLOOD_HAS_CUDA
+    if (capabilities[3].status != "AVAILABLE")
+        throw std::runtime_error("Compiled CUDA backend was not reported available");
+#else
+    if (capabilities[3].status != "UNAVAILABLE" || capabilities[3].toolchainDetected)
+        throw std::runtime_error("CUDA without a toolchain was reported runnable");
+#endif
+#ifdef FLOOD_HAS_OPENACC
+    if (capabilities[4].status != "AVAILABLE")
+        throw std::runtime_error("Compiled OpenACC backend was not reported available");
+#else
+    if (capabilities[4].status != "UNAVAILABLE" || capabilities[4].toolchainDetected)
+        throw std::runtime_error("OpenACC without compiler support was reported runnable");
+#endif
     const auto json = flood::backendCapabilitiesJson();
-    for (const auto name : {"serial", "openmp", "mpi"}) {
+    for (const auto name : {"serial", "openmp", "mpi", "cuda", "openacc"}) {
         if (json.find(std::string("\"") + name + "\":{") == std::string::npos) {
             throw std::runtime_error("Capability JSON is missing a backend");
         }

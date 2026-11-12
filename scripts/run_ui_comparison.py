@@ -14,6 +14,114 @@ def read_one(path):
         return next(csv.DictReader(stream))
 
 
+WET_THRESHOLD_M = 0.05
+SOLVER_ARGS = []  # user scenario/physics overrides, forwarded to every solver run
+DEFAULT_RAIN = {  # mirrors src/simulation/Scenarios.cpp (time s, mm/h)
+    "urban-district": [[0, 120], [60, 40], [150, 0]],
+    "rain-drain": [[0, 60], [30, 0]],
+    "catchment": [[0, 200], [600, 0]],
+}
+MAX_REFERENCE_CELLS = 512 * 512
+
+
+def write_progress(output, stage, message, step, total):
+    """Record the pipeline stage so the UI can follow the run live."""
+    payload = {"stage": stage, "message": message, "step": step, "total": total}
+    (output / "progress.json").write_text(json.dumps(payload), encoding="utf-8")
+
+
+def load_grid(path):
+    import numpy as np
+    return np.atleast_2d(np.loadtxt(path, delimiter=","))
+
+
+def block_average(fine, factor):
+    rows, cols = fine.shape[0] // factor, fine.shape[1] // factor
+    trimmed = fine[:rows * factor, :cols * factor]
+    return trimmed.reshape(rows, factor, cols, factor).mean(axis=(1, 3))
+
+
+def fine_reference(binary, scenario, rows, cols, cell_size, duration, factor, output,
+                   threads):
+    """Uniform solution at `factor`x resolution, block-averaged to the model grid.
+
+    This is the 'ground truth' used for flood-extent accuracy: the same physics
+    without coarse-resolution or adaptive approximations.
+    """
+    fine_rows, fine_cols = rows * factor, cols * factor
+    if fine_rows * fine_cols > MAX_REFERENCE_CELLS:
+        return None, f"skipped: {fine_rows}x{fine_cols} reference exceeds the UI limit"
+    command = [str(binary), "--scenario", scenario, "--rows", str(fine_rows),
+               "--cols", str(fine_cols), "--cell-size", repr(cell_size / factor),
+               "--duration", str(duration), "--output", str(output), *SOLVER_ARGS]
+    if threads > 1:
+        command.extend(("--backend", "openmp", "--threads", str(threads)))
+    completed = subprocess.run(command, capture_output=True, text=True)
+    if completed.returncode and threads > 1:
+        command = command[:command.index("--backend")]
+        completed = subprocess.run(command, capture_output=True, text=True)
+    if completed.returncode:
+        return None, f"failed: {completed.stderr.strip()[-300:]}"
+    fine = load_grid(output / "depth.csv")
+    return block_average(fine, factor), f"uniform {fine_rows}x{fine_cols} at {cell_size / factor:g} m, block-averaged x{factor}"
+
+
+def flood_outcomes(reference, candidate, threshold=WET_THRESHOLD_M):
+    """Flood-extent agreement and depth-error distribution versus a reference."""
+    import numpy as np
+    if reference.shape != candidate.shape:
+        raise ValueError("reference and candidate grids differ in shape")
+    predicted = candidate > threshold
+    observed = reference > threshold
+    union = np.logical_or(predicted, observed)
+    intersection = np.logical_and(predicted, observed)
+    union_count = int(union.sum())
+    errors = np.abs(candidate - reference)[union]
+    iou = float(intersection.sum() / union_count) if union_count else 1.0
+    precision = float(intersection.sum() / predicted.sum()) if predicted.sum() else 1.0
+    recall = float(intersection.sum() / observed.sum()) if observed.sum() else 1.0
+    mean_reference = float(reference[union].mean()) if union_count else 0.0
+    mean_error = float(errors.mean()) if errors.size else 0.0
+    upper = float(np.percentile(errors, 99.5)) if errors.size else 0.0
+    upper = upper if upper > 0 else max(float(errors.max()) if errors.size else 0.0, 1e-9)
+    counts, edges = np.histogram(np.clip(errors, 0, upper), bins=24, range=(0.0, upper))
+    return {
+        "wet_threshold_m": threshold,
+        "iou": iou,
+        "precision": precision,
+        "recall": recall,
+        "flooded_cells_model": int(predicted.sum()),
+        "flooded_cells_reference": int(observed.sum()),
+        "mean_abs_error_m": mean_error,
+        "std_abs_error_m": float(errors.std()) if errors.size else 0.0,
+        "max_abs_error_m": float(errors.max()) if errors.size else 0.0,
+        "rmse_m": float(np.sqrt(np.mean(errors ** 2))) if errors.size else 0.0,
+        "relative_error_pct": 100.0 * mean_error / mean_reference if mean_reference > 0 else 0.0,
+        "histogram": {"edges": [float(e) for e in edges], "counts": [int(c) for c in counts]},
+    }
+
+
+def attach_outcomes(args, summary, candidate_depth_path, cell_size, factor):
+    """Compute accuracy outcomes against a high-resolution uniform reference."""
+    import numpy as np
+    if args.no_reference:
+        summary["outcomes"] = {"available": False, "reason": "high-resolution reference disabled"}
+        return
+    write_progress(args.output, "output", "Computing high-resolution reference", 4, 5)
+    candidate = load_grid(candidate_depth_path)
+    reference, description = fine_reference(
+        args.binary, args.scenario, args.rows, args.cols, cell_size, args.duration,
+        factor, args.output / "fine-reference", args.reference_threads)
+    if reference is None:
+        summary["outcomes"] = {"available": False, "reason": description}
+        return
+    np.savetxt(args.output / "reference-depth.csv", reference, delimiter=",", fmt="%.9g")
+    outcomes = flood_outcomes(reference, candidate)
+    outcomes.update({"available": True, "reference": description, "factor": factor,
+                     "reference_cells": args.rows * args.cols * factor * factor})
+    summary["outcomes"] = outcomes
+
+
 def run_adaptive(binary, scenario, rows, cols, duration, backend, threads,
                  processes, output, adaptive_binary, patch_extent, max_level,
                  regrid_interval, refine_threshold, coarsen_threshold,
@@ -28,6 +136,7 @@ def run_adaptive(binary, scenario, rows, cols, duration, backend, threads,
         "--refine-threshold", str(refine_threshold),
         "--coarsen-threshold", str(coarsen_threshold),
         "--output-dir", str(output),
+        *SOLVER_ARGS,
     ]
     if backend == "openmp":
         command.extend(("--threads", str(threads)))
@@ -50,10 +159,19 @@ def run_adaptive(binary, scenario, rows, cols, duration, backend, threads,
     return row
 
 
+def frame_count(rows, cols, budget_bytes=32_000_000):
+    """Time-lapse frames that fit the UI budget (h, hu, hv as float32 per frame)."""
+    return max(8, min(60, budget_bytes // (12 * rows * cols) - 1))
+
+
 def run(binary, scenario, rows, cols, duration, backend, threads, processes,
-    output, mpi_exec="", mpi_numproc_flag="-n", mpi_preflags="", mpi_postflags=""):
+    output, mpi_exec="", mpi_numproc_flag="-n", mpi_preflags="", mpi_postflags="",
+    frames=0):
     command = [str(binary), "--scenario", scenario, "--rows", str(rows), "--cols", str(cols),
-               "--duration", str(duration), "--backend", backend, "--output", str(output)]
+               "--duration", str(duration), "--backend", backend, "--output", str(output),
+               *SOLVER_ARGS]
+    if frames > 0 and backend != "mpi":
+        command.extend(("--frames", str(frames)))
     if backend == "openmp":
         command.extend(("--threads", str(threads)))
     elif backend == "mpi":
@@ -72,7 +190,7 @@ def main():
     parser.add_argument("--rows", type=int, required=True)
     parser.add_argument("--cols", type=int, required=True)
     parser.add_argument("--duration", type=float, required=True)
-    parser.add_argument("--backend", choices=("serial", "openmp", "mpi"), required=True)
+    parser.add_argument("--backend", choices=("serial", "openmp", "mpi", "cuda", "openacc"), required=True)
     parser.add_argument("--threads", type=int, default=1)
     parser.add_argument("--processes", type=int, default=1)
     parser.add_argument("--mpi-exec", default="")
@@ -90,11 +208,30 @@ def main():
     parser.add_argument("--dynamic-load-balancing", action="store_true")
     parser.add_argument("--imbalance-threshold", type=float, default=1.20)
     parser.add_argument("--rebalance-cooldown", type=int, default=10)
+    parser.add_argument("--reference-factor", type=int, default=2,
+                        help="resolution multiplier of the uniform accuracy reference")
+    parser.add_argument("--reference-threads", type=int, default=4)
+    parser.add_argument("--no-reference", action="store_true")
+    parser.add_argument("--solver-args", default="",
+                        help="extra flags for flood_sim / flood_adaptive_benchmark")
     parser.add_argument("--tolerance", type=float, default=1e-8)
     parser.add_argument("--momentum-tolerance", type=float, default=1e-8)
     parser.add_argument("--conservation-tolerance", type=float, default=1e-8)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
+    SOLVER_ARGS.extend(shlex.split(args.solver_args))
+    overrides = dict(zip(SOLVER_ARGS[0::2], SOLVER_ARGS[1::2]))
+    if "--rain-intensity" in overrides:
+        intensity = float(overrides["--rain-intensity"])
+        duration = float(overrides.get("--rain-duration", -1))
+        rainfall = [[0, intensity]] + ([[duration, 0]] if duration >= 0 else [])
+    else:
+        rainfall = DEFAULT_RAIN.get(args.scenario, [[0, 0]])
+    parameters = {key.lstrip("-"): value for key, value in overrides.items()}
+    for stale in ("reference-depth.csv", "summary.json", "current/frames.bin",
+                  "current/frames.json", "current/landuse.csv"):
+        (args.output / stale).unlink(missing_ok=True)
+    write_progress(args.output, "input", "Building scenario and terrain", 1, 5)
     if args.adaptive:
         adaptive_binary = args.adaptive_binary
         if not adaptive_binary or not adaptive_binary.is_file():
@@ -106,12 +243,14 @@ def main():
             raise SystemExit("Adaptive regridding parameters are invalid")
         if args.backend != "mpi" and args.dynamic_load_balancing:
             raise SystemExit("Dynamic load balancing requires the MPI backend")
+        write_progress(args.output, "adaptive", "Serial adaptive reference run", 2, 5)
         reference = run_adaptive(
             adaptive_binary, args.scenario, args.rows, args.cols, args.duration,
             "serial", 1, 1, args.output / "reference", adaptive_binary,
             args.patch_extent, args.max_level, args.regrid_interval,
             args.refine_threshold, args.coarsen_threshold, False,
             args.imbalance_threshold, args.rebalance_cooldown)
+        write_progress(args.output, "solver", f"Adaptive {args.backend} run", 3, 5)
         candidate = run_adaptive(
             adaptive_binary, args.scenario, args.rows, args.cols, args.duration,
             args.backend, args.threads, args.processes, args.output / "current",
@@ -171,17 +310,27 @@ def main():
             "max_error": 0.0, "conservation_pass": conservation_pass,
             "validation_pass": conservation_pass, "stats": stats,
             "refinement_map_available": (args.output / "current" / "refinement.csv").exists(),
+            "rainfall": rainfall, "parameters": parameters,
         }
+        factor = 2 ** args.max_level
+        summary["uniform_fine_cells"] = args.rows * args.cols * factor * factor
+        attach_outcomes(args, summary, args.output / "current" / "depth.csv", 1.0, factor)
+        write_progress(args.output, "done", "Completed", 5, 5)
         with open(args.output / "summary.json", "w", encoding="utf-8") as stream:
             json.dump(summary, stream, indent=2)
         return
 
+    write_progress(args.output, "decomposition", "Serial reference run", 2, 5)
+    # The reference is segmented exactly like the candidate (segment boundaries
+    # shorten the last timestep of each segment), so the comparison stays exact.
+    frames = frame_count(args.rows, args.cols) if args.backend != "mpi" else 0
     reference_stats, reference_time = run(args.binary, args.scenario, args.rows, args.cols,
-        args.duration, "serial", 1, 1, args.output / "reference")
+        args.duration, "serial", 1, 1, args.output / "reference", frames=frames)
+    write_progress(args.output, "solver", f"{args.backend} solver run", 3, 5)
     candidate_stats, candidate_time = run(args.binary, args.scenario, args.rows, args.cols,
         args.duration, args.backend, args.threads, args.processes,
         args.output / "current", args.mpi_exec, args.mpi_numproc_flag,
-        args.mpi_preflags, args.mpi_postflags)
+        args.mpi_preflags, args.mpi_postflags, frames)
     comparison = subprocess.run([
         sys.executable, str(Path(__file__).with_name("compare_outputs.py")),
         str(args.output / "reference" / "depth.csv"),
@@ -234,7 +383,15 @@ def main():
         "conservation_pass": conservation_pass,
         "validation_pass": metrics["within_tolerance"] == "true" and conservation_pass,
         "stats": candidate_stats,
+        "rainfall": rainfall, "parameters": parameters,
+        "steps": int(candidate_stats.get("steps", 0) or 0),
+        "throughput_cell_updates_per_s": (
+            args.rows * args.cols * int(candidate_stats.get("steps", 0) or 0) / backend_seconds
+            if backend_seconds > 0 else 0.0),
     }
+    attach_outcomes(args, summary, args.output / "current" / "depth.csv", 5.0,
+                    max(1, args.reference_factor))
+    write_progress(args.output, "done", "Completed", 5, 5)
     with open(args.output / "summary.json", "w", encoding="utf-8") as stream:
         json.dump(summary, stream, indent=2)
 

@@ -81,7 +81,7 @@ Diagnostics detail::runSharedSolver(Grid& grid, const Rainfall& rainfall,
 
     Diagnostics diagnostics;
     diagnostics.minDepth = std::numeric_limits<double>::infinity();
-    double time = 0.0;
+    double time = config.startTime;
     while (time < config.endTime) {
         double maxRate = 0.0;
         #ifdef FLOOD_HAS_OPENMP

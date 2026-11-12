@@ -38,6 +38,12 @@ struct Arguments {
     double refineThreshold = 0.10;
     double coarsenThreshold = 0.05;
     std::string outputDirectory;
+    flood::ScenarioOptions scenarioOptions;
+    double rainIntensity = -1.0; // mm/h; negative keeps the scenario hyetograph
+    double rainDuration = -1.0;
+    double manning = -1.0;
+    double infiltrationMmPerHour = -1.0;
+    std::string boundary;
 };
 
 bool parseBool(const char* value, const char* name) {
@@ -91,6 +97,15 @@ Arguments parseArguments(int argc, char** argv) {
             args.refineThreshold = std::stod(value);
         else if (key == "--coarsen-threshold")
             args.coarsenThreshold = std::stod(value);
+        else if (key == "--surge-height") args.scenarioOptions.surgeHeight = std::stod(value);
+        else if (key == "--reservoir-depth") args.scenarioOptions.reservoirDepth = std::stod(value);
+        else if (key == "--pond-depth") args.scenarioOptions.pondDepth = std::stod(value);
+        else if (key == "--breach-width") args.scenarioOptions.breachWidth = std::stod(value);
+        else if (key == "--rain-intensity") args.rainIntensity = std::stod(value);
+        else if (key == "--rain-duration") args.rainDuration = std::stod(value);
+        else if (key == "--manning") args.manning = std::stod(value);
+        else if (key == "--infiltration-mm-h") args.infiltrationMmPerHour = std::stod(value);
+        else if (key == "--boundary") args.boundary = value;
         else throw std::invalid_argument("Unknown argument: " + key);
     }
     if (args.backend.empty() || args.scenarioName.empty() ||
@@ -260,10 +275,29 @@ void writeAdaptiveMaps(const Arguments& args, const flood::AdaptiveGrid& grid) {
     writeMap("refinement.csv", refinement);
 }
 
+void applyOverrides(const Arguments& args, flood::Scenario& scenario) {
+    if (args.rainIntensity >= 0.0)
+        scenario.rainfall = flood::constantStorm(args.rainIntensity, args.rainDuration);
+    if (args.manning >= 0.0) scenario.config.manningN = args.manning;
+    if (args.infiltrationMmPerHour >= 0.0)
+        scenario.config.infiltrationMetersPerSecond = args.infiltrationMmPerHour / 1000.0 / 3600.0;
+    if (args.boundary == "closed") scenario.config.boundary = flood::BoundaryCondition::Closed;
+    else if (args.boundary == "outflow") scenario.config.boundary = flood::BoundaryCondition::Outflow;
+    else if (!args.boundary.empty()) throw std::invalid_argument("Boundary must be closed or outflow");
+}
+
+flood::Scenario makeBenchmarkScenarioBase(const Arguments& args);
+
 flood::Scenario makeBenchmarkScenario(const Arguments& args) {
+    flood::Scenario scenario = makeBenchmarkScenarioBase(args);
+    applyOverrides(args, scenario);
+    return scenario;
+}
+
+flood::Scenario makeBenchmarkScenarioBase(const Arguments& args) {
     if (args.scenarioName != "localized-refinement") {
         flood::Scenario scenario = flood::makeScenario(
-            args.scenarioName, args.rows, args.cols, args.cellSize);
+            args.scenarioName, args.rows, args.cols, args.cellSize, args.scenarioOptions);
         scenario.config.endTime = args.endTime;
         scenario.config.maxTimestep = std::min(scenario.config.maxTimestep, 0.02);
         return scenario;
@@ -280,7 +314,8 @@ flood::Scenario makeBenchmarkScenario(const Arguments& args) {
     const std::size_t colEnd = std::min(args.cols, colBegin + args.cols / 5);
     for (std::size_t row = rowBegin; row < rowEnd; ++row)
         for (std::size_t col = colBegin; col < colEnd; ++col)
-            scenario.grid.at(row, col).h = 0.5;
+            scenario.grid.at(row, col).h =
+                args.scenarioOptions.pondDepth >= 0.0 ? args.scenarioOptions.pondDepth : 0.5;
     return scenario;
 }
 
@@ -322,6 +357,24 @@ int execute(const Arguments& args, int rank) {
     }
     if (rank == 0) {
         writeAdaptiveMaps(args, grid);
+        // Base-resolution terrain and land use, so adaptive runs render like uniform ones.
+        if (!args.outputDirectory.empty()) {
+            const std::size_t rows = scenario.grid.rows(), cols = scenario.grid.cols();
+            std::ofstream terrain(std::filesystem::path(args.outputDirectory) / "terrain.csv");
+            terrain << std::setprecision(10);
+            for (std::size_t r = 0; r < rows; ++r) {
+                for (std::size_t c = 0; c < cols; ++c) terrain << (c ? "," : "") << scenario.grid.at(r, c).bed;
+                terrain << '\n';
+            }
+            if (!scenario.landUse.empty()) {
+                std::ofstream landUse(std::filesystem::path(args.outputDirectory) / "landuse.csv");
+                for (std::size_t r = 0; r < rows; ++r) {
+                    for (std::size_t c = 0; c < cols; ++c)
+                        landUse << (c ? "," : "") << static_cast<int>(scenario.landUse[r * cols + c]);
+                    landUse << '\n';
+                }
+            }
+        }
         printRow(args, grid, diagnostics);
     }
     return 0;

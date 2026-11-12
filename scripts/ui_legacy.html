@@ -1,0 +1,890 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#071216">
+<title>Adaptive Flood — Urban Flood Simulation</title>
+<style>
+:root{color-scheme:dark;--bg:#071216;--panel:#0d1c21;--panel2:#102329;--line:#20383d;--ink:#e7f0ed;--muted:#91a6a4;--dim:#637b79;--mint:#75e1c1;--mint2:#41b89c;--blue:#60b4d0;--gold:#efb76d;--red:#ef7d75;--mono:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;--sans:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:88px}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 var(--sans);letter-spacing:.005em}button,input,select{font:inherit}button{color:inherit}a{color:inherit;text-decoration:none}button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--mint);outline-offset:3px}[hidden]{display:none!important}
+.mono,.eyebrow,.tag,.side-label,.metric-label,.table-head,.nav-btn,.button{font-family:var(--mono);letter-spacing:.095em;text-transform:uppercase}.eyebrow{font-size:10px;color:var(--mint);font-weight:700}.muted{color:var(--muted)}.small{font-size:12px}.accent{color:var(--mint)}.gold{color:var(--gold)}
+.wrap{width:min(1220px,calc(100% - 56px));margin:0 auto}.landing-top{height:78px;position:sticky;top:0;z-index:20;background:rgba(7,18,22,.88);backdrop-filter:blur(16px);border-bottom:1px solid rgba(117,225,193,.1)}.top-inner{height:100%;width:min(1380px,calc(100% - 56px));margin:auto;display:flex;align-items:center;justify-content:space-between}.brand{display:flex;align-items:center;gap:12px;font-size:13px;font-weight:800;letter-spacing:.16em}.brand-mark{width:29px;height:29px;border:1px solid rgba(117,225,193,.7);border-radius:7px;display:grid;place-items:center;color:var(--mint);font-size:17px}.brand small{display:block;font:9px var(--mono);color:var(--muted);letter-spacing:.16em;margin-top:2px}.top-links{display:flex;align-items:center;gap:27px;font:10px var(--mono);letter-spacing:.12em;color:var(--muted);text-transform:uppercase}.top-links a:hover{color:var(--mint)}
+.button{display:inline-flex;align-items:center;justify-content:center;gap:11px;min-height:46px;padding:0 19px;border:1px solid var(--line);border-radius:3px;background:transparent;color:var(--ink);font-size:10px;font-weight:700;cursor:pointer;transition:transform .18s ease,border-color .18s ease,background .18s ease}.button:hover{transform:translateY(-2px);border-color:var(--mint);color:var(--mint)}.button.primary{background:var(--mint);border-color:var(--mint);color:#081613}.button.primary:hover{background:#9af0d7;color:#081613}.button.compact{min-height:38px;padding:0 13px;font-size:9px}.button:disabled{opacity:.5;cursor:wait;transform:none}
+.hero{min-height:660px;display:grid;grid-template-columns:1.02fr .98fr;align-items:center;gap:40px;padding:75px 0 90px;position:relative}.hero:before{content:"";position:absolute;width:680px;height:520px;left:-280px;top:-150px;background:radial-gradient(ellipse,rgba(39,127,116,.17),transparent 68%);pointer-events:none}.hero-copy{position:relative;z-index:1}.hero-copy h1{font-size:clamp(58px,8.3vw,108px);line-height:.88;letter-spacing:-.085em;margin:24px 0 23px;font-weight:730}.hero-copy h1 span{color:var(--mint)}.hero-sub{font-size:clamp(16px,2vw,21px);line-height:1.42;max-width:550px;color:#ccdad6;font-weight:450;letter-spacing:-.02em}.hero-description{max-width:540px;color:var(--muted);font-size:14px;line-height:1.8;margin:18px 0 29px}.hero-actions{display:flex;flex-wrap:wrap;gap:11px}.hero-proof{margin-top:44px;display:flex;align-items:center;gap:12px;color:var(--dim);font:9px var(--mono);letter-spacing:.13em;text-transform:uppercase}.pulse{width:7px;height:7px;border-radius:50%;background:var(--mint);box-shadow:0 0 12px var(--mint)}
+.hero-visual{position:relative;min-height:440px;border:1px solid #1d393d;border-radius:5px;overflow:hidden;background:radial-gradient(ellipse at 56% 54%,rgba(30,121,111,.27),transparent 56%),linear-gradient(145deg,#0a1a20,#0b2025 57%,#091419)}.visual-grid{position:absolute;inset:0;background-image:linear-gradient(rgba(112,184,170,.12) 1px,transparent 1px),linear-gradient(90deg,rgba(112,184,170,.12) 1px,transparent 1px);background-size:33px 33px;mask-image:linear-gradient(135deg,transparent 0%,#000 25%,#000 87%,transparent 100%);opacity:.65}.terrain-svg{position:absolute;inset:0;width:100%;height:100%;opacity:.82}.hero-map{position:absolute;inset:9% 8%;width:84%;height:78%;image-rendering:pixelated;mix-blend-mode:screen;opacity:.86}.viz-caption{position:absolute;left:17px;bottom:14px;right:17px;display:flex;justify-content:space-between;gap:12px;color:#b2c5c0;font:9px var(--mono);letter-spacing:.11em;text-transform:uppercase}.viz-chip{position:absolute;top:15px;left:15px;padding:7px 9px;border:1px solid #31554f;background:rgba(6,20,21,.75);color:var(--mint);font:9px var(--mono);letter-spacing:.1em}.viz-readout{position:absolute;top:15px;right:15px;padding:7px 9px;background:rgba(6,20,21,.78);color:#c4d4cf;font:9px var(--mono);letter-spacing:.08em}.scan-line{position:absolute;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--mint),transparent);opacity:.3;animation:scan 8s ease-in-out infinite}.map-legend{display:inline-flex;gap:3px;align-items:center}.map-legend i{width:12px;height:4px;background:#228b8b}@keyframes scan{0%,100%{top:18%;opacity:.08}50%{top:78%;opacity:.48}}
+.stat-ribbon{border-top:1px solid var(--line);border-bottom:1px solid var(--line);display:grid;grid-template-columns:repeat(4,1fr);margin:12px 0 0}.ribbon-item{padding:22px 20px 22px 0}.ribbon-item+.ribbon-item{border-left:1px solid var(--line);padding-left:20px}.ribbon-value{font-size:26px;line-height:1.1;font-weight:650;letter-spacing:-.05em}.ribbon-label{margin-top:7px;color:var(--muted);font:9px var(--mono);letter-spacing:.1em;text-transform:uppercase}.ribbon-source{font:9px var(--mono);color:var(--dim);margin-top:15px}
+.section{padding:100px 0;border-top:1px solid rgba(117,225,193,.1)}.section-head{display:flex;justify-content:space-between;align-items:end;gap:30px;margin-bottom:36px}.section-head h2{font-size:clamp(32px,5vw,58px);line-height:1.02;letter-spacing:-.065em;margin:12px 0 0;max-width:680px}.section-intro{max-width:405px;margin:0;color:var(--muted);font-size:13px;line-height:1.8}.problem-layout{display:grid;grid-template-columns:.8fr 1.2fr;gap:35px;align-items:stretch}.cost-flow{padding:25px;border:1px solid var(--line);background:linear-gradient(150deg,#102126,#0b181c);display:grid;grid-template-columns:1fr auto;align-content:center;gap:13px 10px}.flow-step{padding:10px 11px;background:#132a2f;color:#e0eae5;font:10px var(--mono);letter-spacing:.075em;text-transform:uppercase}.flow-arrow{align-self:center;color:var(--mint);text-align:center}.flow-cost{font:10px var(--mono);color:var(--dim);align-self:center}.problem-copy{padding:23px 0;color:var(--muted);font-size:14px;line-height:1.8}.problem-copy strong{color:var(--ink);font-weight:550}.compare-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:19px}.compare-card{padding:17px;border:1px solid var(--line);background:#0b191d}.compare-card.adaptive{border-color:#2b5d52;background:linear-gradient(140deg,#102722,#0b1a1d)}.compare-title{font:10px var(--mono);letter-spacing:.12em;color:var(--muted)}.compare-card.adaptive .compare-title{color:var(--mint)}.grid-sample{display:grid;grid-template-columns:repeat(9,1fr);gap:3px;margin:13px 0;height:50px}.grid-sample span{background:#336773;opacity:.72}.grid-sample.refined span:nth-child(3n),.grid-sample.refined span:nth-child(3n+1){background:#71ddbb;opacity:.95;animation:refinePulse 2.6s ease-in-out infinite alternate}.grid-sample.refined span:nth-child(3n+1){animation-delay:.5s}@keyframes refinePulse{from{filter:brightness(.78)}to{filter:brightness(1.3)}}.compare-caption{font-size:11px;color:var(--muted)}
+.architecture-steps{display:grid;grid-template-columns:repeat(5,1fr);border:1px solid var(--line);background:#0b191d}.arch-step{min-height:185px;padding:21px 18px;position:relative}.arch-step+.arch-step{border-left:1px solid var(--line)}.arch-step:after{content:"›";position:absolute;right:-8px;top:48%;z-index:2;background:var(--bg);color:var(--mint);padding:0 3px;font-size:18px}.arch-step:last-child:after{display:none}.arch-num{color:var(--mint);font:10px var(--mono)}.arch-step h3{font-size:14px;letter-spacing:-.02em;margin:28px 0 8px}.arch-step p{color:var(--muted);font-size:11px;line-height:1.7;margin:0}.feature-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}.feature-card{min-height:190px;padding:24px;border:1px solid var(--line);background:linear-gradient(150deg,#0f1f24,#0b171b);transition:border-color .2s,transform .2s}.feature-card:hover{border-color:#42796d;transform:translateY(-3px)}.feature-top{display:flex;justify-content:space-between;align-items:center}.feature-index{color:var(--mint);font:10px var(--mono)}.feature-icon{color:#79cdb5;font-size:17px}.feature-card h3{font-size:17px;margin:24px 0 7px;letter-spacing:-.03em}.feature-card p{max-width:500px;color:var(--muted);font-size:12px;line-height:1.75;margin:0}
+.results-band{padding:28px;border:1px solid #25453f;background:radial-gradient(ellipse at right,#14312c 0%,#0d1e21 54%,#0a171b 100%);display:grid;grid-template-columns:1fr 1fr;gap:12px}.result-metric{border-top:1px solid rgba(117,225,193,.2);padding:17px 0}.result-number{font-size:35px;font-weight:650;letter-spacing:-.06em;line-height:1}.result-label{color:#c1d2cc;font:9px var(--mono);letter-spacing:.1em;text-transform:uppercase;margin-top:8px}.result-meta{color:var(--muted);font-size:10px;margin-top:4px}.measured-label{display:inline-flex;align-items:center;gap:7px;color:var(--mint);font:9px var(--mono);letter-spacing:.11em;text-transform:uppercase;padding:7px 9px;border:1px solid #2a5149}
+.lab-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}.lab-panel{padding:24px;border:1px solid var(--line);background:#0b191d}.lab-panel h3{font-size:16px;margin:0 0 8px}.refine-diagram{height:160px;display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:center}.block-grid{display:grid;grid-template-columns:repeat(8,1fr);grid-auto-rows:16px;gap:2px;align-content:center}.block-grid span{background:#357182}.block-grid.adaptive span:nth-child(13),.block-grid.adaptive span:nth-child(14),.block-grid.adaptive span:nth-child(21),.block-grid.adaptive span:nth-child(22),.block-grid.adaptive span:nth-child(29),.block-grid.adaptive span:nth-child(30){background:#82e4bd}.block-grid.adaptive span:nth-child(14),.block-grid.adaptive span:nth-child(22){outline:1px solid #dbbf74}.diagram-arrow{grid-column:1/-1;text-align:center;color:var(--mint);font:11px var(--mono);letter-spacing:.1em}.solver-diagram{display:flex;flex-direction:column;align-items:center;gap:8px;padding:12px 0;color:var(--muted);font:9px var(--mono);letter-spacing:.1em}.solver-box{padding:9px 16px;background:#17322f;color:var(--mint);border:1px solid #315c50}.solver-branches{display:flex;gap:9px}.solver-branches span{padding:7px 10px;background:#14262b;border:1px solid #253e42}.solver-down{color:var(--mint);line-height:1}.balancing-flow{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-top:19px}.flow-chip{padding:11px 8px;border:1px solid var(--line);text-align:center;color:var(--muted);font:9px var(--mono);letter-spacing:.06em}.flow-chip:after{content:" →";color:var(--mint)}.flow-chip:last-child:after{content:""}
+.closing{padding:75px 30px;margin:40px auto 100px;border:1px solid #29554b;background:radial-gradient(ellipse at 85% 10%,rgba(61,169,136,.2),transparent 45%),#0d1d20;text-align:center}.closing h2{font-size:clamp(35px,6vw,66px);line-height:1;letter-spacing:-.07em;margin:13px 0}.closing p{max-width:610px;margin:0 auto 24px;color:var(--muted);font-size:13px}
+.app{min-height:100vh;display:grid;grid-template-columns:244px minmax(0,1fr)}.sidebar{height:100vh;position:sticky;top:0;background:#09171b;border-right:1px solid var(--line);display:flex;flex-direction:column;padding:19px 13px}.side-brand{padding:3px 10px 25px}.side-brand .brand{font-size:11px}.side-label{padding:16px 11px 8px;color:#617976;font-size:9px}.nav-list{display:grid;gap:3px}.nav-btn{width:100%;min-height:39px;padding:0 11px;border:1px solid transparent;background:transparent;text-align:left;color:#9ab0ab;font-size:9px;cursor:pointer;display:flex;align-items:center;gap:11px;letter-spacing:.08em}.nav-btn .nav-icon{width:18px;color:#72a69b;font-size:14px;text-align:center}.nav-btn:hover{background:#102226;color:var(--ink)}.nav-btn.active{background:#122b2b;border-color:#284a44;color:var(--mint)}.side-foot{margin-top:auto;padding:14px 10px;border-top:1px solid var(--line);font:9px/1.8 var(--mono);color:var(--dim);letter-spacing:.05em}.side-foot b{color:var(--mint);font-weight:500}.app-main{min-width:0}.app-top{height:67px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 clamp(18px,3vw,42px);position:sticky;top:0;z-index:10;background:rgba(7,18,22,.91);backdrop-filter:blur(14px)}.app-top-left{display:flex;align-items:center;gap:13px}.crumb{color:var(--dim);font:9px var(--mono);letter-spacing:.12em;text-transform:uppercase}.crumb strong{color:var(--ink);font-weight:500}.app-top-right{display:flex;align-items:center;gap:15px}.connection{color:var(--muted);font:9px var(--mono);letter-spacing:.1em}.page-content{width:min(1360px,100%);padding:32px clamp(18px,3vw,42px) 65px;margin:auto}.page{display:none;animation:appear .25s ease}.page.active{display:block}@keyframes appear{from{opacity:.55;transform:translateY(5px)}to{opacity:1;transform:none}}.page-title-row{display:flex;justify-content:space-between;align-items:start;gap:20px;margin-bottom:25px}.page-title h1{font-size:29px;line-height:1.1;letter-spacing:-.05em;margin:8px 0 7px}.page-title p{margin:0;color:var(--muted);font-size:12px}.section-title{font-size:14px;letter-spacing:-.02em;margin:0 0 15px}.panel{border:1px solid var(--line);background:linear-gradient(155deg,#0e1e23,#0b181c);padding:19px}.panel+.panel{margin-top:12px}.panel-head{display:flex;justify-content:space-between;align-items:center;gap:14px;margin-bottom:14px}.panel-head h2,.panel-head h3{font-size:12px;letter-spacing:.01em;margin:0}.tag{display:inline-flex;align-items:center;gap:6px;color:var(--muted);font-size:8px;letter-spacing:.09em}.tag-dot{width:6px;height:6px;border-radius:50%;background:var(--mint)}.grid-4{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.grid-2{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}.dash-metric{padding:15px;border:1px solid var(--line);background:#0c1a1e;min-height:98px}.metric-label{color:var(--dim);font-size:8px;letter-spacing:.1em}.metric-value{font-size:23px;line-height:1.2;letter-spacing:-.05em;margin-top:10px}.metric-hint{font-size:10px;color:var(--muted);margin-top:4px}.overview-grid{display:grid;grid-template-columns:1.38fr .82fr;gap:12px;margin-top:12px}.output-frame{position:relative;background:#091519;border:1px solid #1c383c;min-height:260px;overflow:hidden}.output-canvas{width:100%;height:auto;min-height:260px;max-height:390px;display:block;image-rendering:pixelated}.empty-overlay{position:absolute;inset:0;display:grid;place-items:center;padding:20px;text-align:center;color:var(--muted);font-size:11px;background:rgba(7,18,22,.78)}.empty-overlay b{display:block;color:var(--ink);margin-bottom:6px;font-size:12px}.output-foot{display:flex;justify-content:space-between;gap:15px;margin-top:12px;color:var(--muted);font:9px var(--mono);letter-spacing:.06em}.legend{display:inline-flex;align-items:center;gap:4px}.legend i{width:15px;height:5px;background:#238a8b}.run-summary{display:grid;gap:0}.summary-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 0;border-bottom:1px solid rgba(32,56,61,.8);font-size:10px}.summary-row:last-child{border:0}.summary-row span:first-child{color:var(--muted)}.summary-row strong{font:10px var(--mono);color:#d5e1db}.status-pill{display:inline-flex;gap:6px;align-items:center;border:1px solid #295348;background:#10241f;color:var(--mint);font:8px var(--mono);letter-spacing:.08em;padding:5px 7px;text-transform:uppercase}.status-pill.fail{color:var(--red);border-color:#603d38;background:#271715}
+.form-layout{display:grid;grid-template-columns:.82fr 1.18fr;gap:12px;align-items:start}.form-panel{display:grid;gap:14px}.form-fields{display:grid;grid-template-columns:1fr 1fr;gap:12px}.field{display:grid;gap:6px}.field.full{grid-column:1/-1}.field label{color:var(--muted);font:8px var(--mono);letter-spacing:.1em;text-transform:uppercase}.field input,.field select{width:100%;min-height:37px;border:1px solid #294147;border-radius:2px;background:#09181c;color:var(--ink);padding:0 10px;font-size:11px}.field input[type=checkbox]{width:15px;min-height:15px;accent-color:var(--mint)}.check-field{display:flex;align-items:center;gap:9px;min-height:35px;color:#c2d3cc;font-size:11px}.form-divider{grid-column:1/-1;border-top:1px solid var(--line);margin-top:2px;padding-top:11px}.form-divider h3{margin:0 0 3px;font:9px var(--mono);color:var(--mint);letter-spacing:.1em;text-transform:uppercase}.form-note{color:var(--dim);font-size:9px;line-height:1.6;margin:0}.status-message{min-height:34px;padding:10px;border-left:2px solid var(--dim);background:#091619;color:var(--muted);font-size:10px}.status-message.running{border-color:var(--gold);color:var(--gold)}.status-message.error{border-color:var(--red);color:#ffaaa2}.status-message.success{border-color:var(--mint);color:var(--mint)}.run-metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.run-metrics .dash-metric{min-height:78px;padding:11px}.run-metrics .metric-value{font-size:17px;margin-top:6px}.tabs{display:flex;gap:5px}.tab-btn{padding:7px 10px;border:1px solid var(--line);background:#09181c;color:var(--muted);font:8px var(--mono);letter-spacing:.08em;cursor:pointer}.tab-btn.active{color:var(--mint);border-color:#39685c;background:#112421}
+.data-controls{display:flex;align-items:end;gap:9px;flex-wrap:wrap;margin-bottom:14px}.data-controls .field{min-width:155px}.chart-list{display:grid;gap:10px}.chart-row{display:grid;grid-template-columns:130px 1fr 85px;align-items:center;gap:13px;font-size:10px}.chart-name{color:#bfd0ca;font:9px var(--mono);letter-spacing:.04em}.bar-track{height:12px;background:#122328;position:relative}.bar-fill{height:100%;background:linear-gradient(90deg,#237f78,#76dfbd);min-width:1px}.bar-fill.adaptive{background:linear-gradient(90deg,#3979a0,#76c8df)}.bar-fill.dynamic{background:linear-gradient(90deg,#9b743e,#efc277)}.bar-value{text-align:right;color:#d6e4dd;font:9px var(--mono)}.table-wrap{overflow:auto;margin-top:14px}table{width:100%;border-collapse:collapse;min-width:670px}th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);font-size:9px}th{color:var(--dim);font:8px var(--mono);letter-spacing:.08em;text-transform:uppercase}td{color:#c7d4ce}td.mono{font-size:9px}tr:hover td{background:rgba(117,225,193,.035)}.no-data{padding:18px;border:1px dashed #294147;color:var(--muted);font-size:10px;text-align:center}.workload-chart{display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:end;padding:14px 10px 6px}.workload-group{display:grid;gap:7px}.workload-title{font:8px var(--mono);letter-spacing:.1em;color:var(--muted);text-transform:uppercase}.rank-bars{height:128px;display:flex;align-items:end;gap:6px;border-bottom:1px solid #345056;padding:0 6px}.rank-bar{flex:1;min-width:8px;background:linear-gradient(0deg,#247b70,#78dfb7);position:relative;transition:height .3s}.rank-bar.after{background:linear-gradient(0deg,#367698,#74c9dc)}.rank-bar span{position:absolute;bottom:-19px;left:50%;transform:translateX(-50%);color:var(--dim);font:7px var(--mono)}.workload-legend{color:var(--dim);font-size:9px;margin-top:24px}.validation-list{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.validation-item{padding:12px;border:1px solid var(--line);background:#0b191d;display:flex;gap:10px;align-items:start}.validation-check{color:var(--mint);font:11px var(--mono)}.validation-item strong{display:block;font-size:10px;font-weight:550}.validation-item small{display:block;color:var(--dim);font-size:8px;margin-top:3px}.architecture-flow{display:grid;gap:0;max-width:920px;margin:auto}.architecture-node{display:grid;grid-template-columns:55px 1fr;gap:18px;padding:17px 19px;border:1px solid var(--line);background:#0c1b20}.architecture-node+.architecture-node{margin-top:7px}.architecture-index{font:9px var(--mono);color:var(--mint)}.architecture-node h3{margin:0 0 3px;font-size:11px}.architecture-node p{margin:0;color:var(--muted);font-size:9px}.tech-pills{display:flex;flex-wrap:wrap;gap:7px;margin-top:17px}.tech-pills span{padding:8px 10px;border:1px solid var(--line);color:#bdd0ca;font:8px var(--mono);letter-spacing:.07em}.page-bottom-note{margin-top:22px;color:var(--dim);font:8px/1.7 var(--mono);letter-spacing:.04em}
+@media(max-width:950px){.hero{grid-template-columns:1fr;gap:36px;padding-top:60px}.hero-visual{min-height:380px}.problem-layout,.form-layout,.overview-grid{grid-template-columns:1fr}.architecture-steps{grid-template-columns:1fr 1fr}.arch-step:nth-child(odd){border-left:0}.arch-step:nth-child(n+3){border-top:1px solid var(--line)}.arch-step:after{display:none}.app{grid-template-columns:205px minmax(0,1fr)}}
+@media(max-width:700px){.wrap{width:calc(100% - 34px)}.top-inner{width:calc(100% - 32px)}.landing-top{height:65px}.top-links{gap:12px}.top-links a:nth-child(1),.top-links a:nth-child(2){display:none}.top-links .button{min-height:34px;padding:0 10px}.hero{min-height:auto;padding:66px 0 50px}.hero-copy h1{font-size:68px}.hero-visual{min-height:310px}.hero-proof{margin-top:28px}.stat-ribbon{grid-template-columns:1fr 1fr}.ribbon-item:nth-child(3){border-left:0;padding-left:0;border-top:1px solid var(--line)}.ribbon-item:nth-child(4){border-top:1px solid var(--line)}.section{padding:66px 0}.section-head{display:block}.section-intro{margin-top:15px}.problem-layout{gap:16px}.compare-grid,.feature-grid,.lab-grid{grid-template-columns:1fr}.architecture-steps{grid-template-columns:1fr}.arch-step{min-height:135px}.arch-step+.arch-step{border-left:0;border-top:1px solid var(--line)}.arch-step h3{margin-top:17px}.results-band{padding:18px}.result-number{font-size:28px}.balancing-flow{grid-template-columns:repeat(3,1fr)}.closing{padding:48px 18px;margin:25px auto 60px}.app{display:block}.sidebar{position:sticky;top:0;z-index:30;width:100%;height:auto;padding:7px 9px 0;border-right:0;border-bottom:1px solid var(--line);overflow:hidden}.side-brand,.side-label,.side-foot{display:none}.nav-list{display:flex;overflow-x:auto;gap:3px;padding-bottom:6px;scrollbar-width:none}.nav-btn{width:auto;white-space:nowrap;min-height:39px;padding:0 10px;font-size:8px}.nav-btn .nav-icon{display:none}.app-top{height:51px}.page-content{padding-top:23px}.page-title-row{align-items:center}.page-title h1{font-size:24px}.page-title p{max-width:430px}.grid-4{grid-template-columns:1fr 1fr}.grid-3{grid-template-columns:1fr 1fr}.validation-list{grid-template-columns:1fr 1fr}.form-fields{grid-template-columns:1fr 1fr}.run-metrics{grid-template-columns:1fr 1fr}.chart-row{grid-template-columns:95px 1fr 64px;gap:7px}.workload-chart{gap:10px;padding-left:0;padding-right:0}.page-title-row>.button{min-height:35px;padding:0 9px;font-size:8px}.app-top-right .connection{display:none}.app-top-right .button{display:inline-flex;min-height:30px;padding:0 8px;font-size:8px}}
+@media(max-width:420px){.hero-copy h1{font-size:56px}.hero-visual{min-height:265px}.stat-ribbon .ribbon-item{padding:15px 8px 15px 0}.ribbon-value{font-size:22px}.validation-list{grid-template-columns:1fr}.grid-4,.grid-3{grid-template-columns:1fr 1fr}.field input,.field select{font-size:10px;padding:0 7px}.workload-chart{grid-template-columns:1fr}.rank-bars{height:100px}.form-fields{grid-template-columns:1fr}.field.full,.form-divider{grid-column:1}.page-title-row{align-items:flex-start}.page-title-row>.button{margin-top:10px}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
+
+.output-frame.gis{height:clamp(300px,34vw,400px);min-height:0;background:#101a1b;border-radius:3px}.output-frame.gis.mid{height:clamp(380px,40vw,500px)}.output-frame.gis.tall{height:clamp(420px,52vw,620px)}
+.output-frame.gis>canvas{position:absolute;inset:0;width:100%;height:100%;max-height:none;min-height:0;image-rendering:auto;cursor:grab;touch-action:none}.output-frame.gis>canvas.panning{cursor:grabbing}
+.gis-zoom{position:absolute;top:10px;right:10px;display:grid;gap:1px;background:rgba(7,18,22,.55);border:1px solid #38585a;border-radius:3px;overflow:hidden;z-index:3;backdrop-filter:blur(6px)}
+.gis-zoom button,.gis-mode button{padding:7px 9px;border:0;background:rgba(8,21,25,.82);color:#d6e5e1;font:9px var(--mono);letter-spacing:.08em;cursor:pointer;min-width:34px}
+.gis-zoom button:hover,.gis-mode button:hover:not(:disabled){background:#17363a}.gis-zoom button[data-act=in],.gis-zoom button[data-act=out]{font-size:15px;line-height:1;padding:5px 9px}
+.gis-mode{position:absolute;top:10px;left:50%;transform:translateX(-50%);display:flex;gap:1px;background:rgba(7,18,22,.55);border:1px solid #38585a;border-radius:3px;overflow:hidden;z-index:3;backdrop-filter:blur(6px)}
+.gis-mode button.active{background:#7fb8d6;color:#07202b}.gis-mode button:disabled{opacity:.4;cursor:not-allowed}
+.gis-layers{position:absolute;top:10px;left:10px;display:grid;gap:5px;padding:9px 11px;background:rgba(8,21,25,.8);border:1px solid #38585a;border-radius:3px;z-index:3;backdrop-filter:blur(6px);max-width:178px}
+.gis-title{font:8px var(--mono);letter-spacing:.14em;color:#8fb3b0}.gis-layers label{display:flex;gap:7px;align-items:center;color:#d6e5e1;font:9.5px var(--sans);cursor:pointer}.gis-layers label.off{opacity:.42;cursor:not-allowed}
+.gis-layers input{accent-color:#5ba8cf;margin:0}
+.gis-legend{position:absolute;left:10px;bottom:10px;display:flex;gap:8px;z-index:3;flex-wrap:wrap;max-width:calc(100% - 20px);pointer-events:none}
+.gis-legend-block{padding:7px 10px 6px;background:rgba(8,21,25,.82);border:1px solid #38585a;border-radius:3px;min-width:150px;backdrop-filter:blur(6px)}
+.gis-legend-block b{display:block;font:8.5px var(--mono);letter-spacing:.08em;color:#d6e5e1;font-weight:500;margin-bottom:5px}
+.gis-legend-block .bar{display:block;height:7px;border-radius:1px;border:1px solid rgba(255,255,255,.15)}
+.gis-legend-block .ticks{display:flex;justify-content:space-between;gap:12px;margin-top:4px;font:8px var(--mono);color:#9bb7b3;letter-spacing:.06em}.gis-legend-block .ticks em{display:block;font-style:normal;color:#e3efec;margin-top:1px}
+.gis-legend-block .keys{justify-content:flex-start;gap:12px}.gis-legend-block .keys u{display:inline-block;width:12px;height:8px;margin-right:5px;vertical-align:-1px}.keys .l1{border:1px solid #c4eef7;background:rgba(190,232,242,.12)}.keys .l2{border:1.5px solid #fff;background:rgba(255,255,255,.22)}
+.gis-cursor{position:absolute;border:1px solid rgba(255,255,255,.9);pointer-events:none;z-index:2;box-shadow:0 0 0 1px rgba(0,0,0,.35)}
+.gis-tip{position:absolute;display:grid;grid-template-columns:auto auto;gap:3px 14px;padding:9px 11px;background:rgba(7,18,22,.92);border:1px solid #38585a;border-radius:3px;z-index:4;pointer-events:none;font:10px var(--mono);color:#9bb7b3}.gis-tip b{color:#f0f6f4;font-weight:500;text-align:right}
+@media(max-width:700px){.gis-layers{display:none}.gis-mode{left:10px;transform:none;top:auto;bottom:62px}}
+.hero-slab{position:absolute;left:50%;top:45%;width:min(70%,62vh);aspect-ratio:1;transform:translate(-50%,-50%) perspective(1500px) rotateX(32deg) rotateZ(-4deg);box-shadow:0 12px 0 #5b533b,0 22px 0 #3b3a2b,0 44px 46px rgba(0,0,0,.55);border-radius:2px}
+.hero-slab .hero-frame{position:absolute;inset:0;border:0;min-height:0;background:#101a1b}.hero-slab canvas{position:absolute;inset:0;width:100%;height:100%;max-height:none;min-height:0;mix-blend-mode:normal;opacity:1;image-rendering:auto;border-radius:0}
+.hero-visual{background:radial-gradient(ellipse at 50% 80%,rgba(70,130,160,.22),transparent 62%),linear-gradient(170deg,#0c1b21,#0a171b 70%)}
+.map-legend em{font:normal 8px var(--mono);color:#a9bec0;letter-spacing:.1em;margin:0 5px}
+.map-legend i{width:16px;height:5px;background:#b2e2ef}.map-legend i:nth-of-type(2){background:#68bee2}.map-legend i:nth-of-type(3){background:#267fc2}.map-legend i:nth-of-type(4){background:#0a2f6c}
+.legend em{font:normal 8px var(--mono);color:#8ea6a6;letter-spacing:.08em;margin:0 4px}.legend i{background:#b2e2ef}.legend i:nth-child(3){background:#68bee2}.legend i:nth-child(4){background:#267fc2}.legend i:nth-child(5){background:#0a2f6c}
+</style>
+</head>
+<body>
+<section id="landing">
+  <header class="landing-top">
+    <div class="top-inner">
+      <a class="brand" href="#" aria-label="Adaptive Flood home"><span class="brand-mark">≈</span><span>ADAPTIVE FLOOD<small>COMPUTATIONAL HYDRODYNAMICS</small></span></a>
+      <nav class="top-links" aria-label="Landing page">
+        <a href="#method">Method</a><a href="#evidence">Evidence</a>
+        <button class="button primary compact" data-enter>OPEN SIMULATOR <span>↗</span></button>
+      </nav>
+    </div>
+  </header>
+  <main>
+    <section class="wrap hero">
+      <div class="hero-copy">
+        <div class="eyebrow">RESEARCH FRAMEWORK <span class="muted">/ 01</span></div>
+        <h1>ADAPTIVE<br><span>FLOOD</span></h1>
+        <div class="hero-sub">High-Resolution Urban Flood Simulation<br>with Adaptive Spatial Resolution and Parallel Computing</div>
+        <p class="hero-description">A physics-based computational framework for simulating urban flood dynamics while intelligently allocating computational resources where they matter most.</p>
+        <div class="hero-actions">
+          <button class="button primary" data-enter>EXPLORE THE SIMULATOR <span>→</span></button>
+          <a class="button" href="#research">VIEW RESEARCH <span>↓</span></a>
+        </div>
+        <div class="hero-proof"><i class="pulse"></i>Finite-volume physics <span>·</span> adaptive mesh <span>·</span> parallel backends</div>
+      </div>
+      <div class="hero-visual" aria-label="Terrain flooded by simulated water">
+        <div class="hero-slab"><div class="output-frame hero-frame"><canvas class="hero-map" id="heroMap" aria-label="Land and simulated flood water from the latest solver output"></canvas></div></div>
+        <div class="viz-chip">LAND · LOW-LYING TERRAIN · FLOOD WATER</div><div class="viz-readout" id="heroMapStatus">LOCAL OUTPUT CHECK</div>
+        <div class="viz-caption"><span id="heroMapCaption">Final simulated water field</span><span class="map-legend"><em>SHALLOW</em><i></i><i></i><i></i><i></i><em>DEEP</em></span></div>
+      </div>
+    </section>
+    <section class="wrap" aria-label="Selected measurements">
+      <div class="stat-ribbon">
+        <div class="ribbon-item"><div class="ribbon-value" id="landing-mpi">—</div><div class="ribbon-label">MPI speedup · 1024² dam break</div></div>
+        <div class="ribbon-item"><div class="ribbon-value" id="landing-openmp">—</div><div class="ribbon-label">OpenMP speedup · 4 threads</div></div>
+        <div class="ribbon-item"><div class="ribbon-value" id="landing-imbalance">—</div><div class="ribbon-label">Dynamic MPI · imbalance</div></div>
+        <div class="ribbon-item"><div class="ribbon-value" id="landing-migrated">—</div><div class="ribbon-label">Cells migrated · measured run</div></div>
+      </div>
+      <div class="ribbon-source">EXPERIMENTAL RESULTS · LOADED LIVE FROM benchmarks/adaptive/final-summary.csv</div>
+    </section>
+    <section class="section" id="research">
+      <div class="wrap">
+        <div class="section-head"><div><div class="eyebrow">THE COMPUTATIONAL CHALLENGE</div><h2>Flood simulation is a computational problem.</h2></div><p class="section-intro">More detail means more work. The challenge is spending that work where water dynamics make it matter.</p></div>
+        <div class="problem-layout" id="method">
+          <div class="cost-flow" aria-label="Resolution increases simulation cost">
+            <div class="flow-step">Higher resolution</div><div class="flow-cost">more detail</div><div class="flow-arrow">↓</div><div class="flow-cost">larger grid</div>
+            <div class="flow-step">More cells</div><div class="flow-cost">per timestep</div><div class="flow-arrow">↓</div><div class="flow-cost">more operations</div>
+            <div class="flow-step">More computation</div><div class="flow-cost">parallel work</div><div class="flow-arrow">↓</div><div class="flow-cost">higher runtime</div>
+            <div class="flow-step">Higher simulation cost</div><div class="flow-cost">resource demand</div>
+          </div>
+          <div class="problem-copy"><strong>Uniformly increasing resolution improves spatial detail, but forces the solver to spend computational effort even where the flood dynamics are relatively simple.</strong>
+            <div class="compare-grid">
+              <div class="compare-card"><div class="compare-title">UNIFORM COMPUTATION</div><div class="grid-sample" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div><div class="compare-caption">Every region receives similar resolution.</div></div>
+              <div class="compare-card adaptive"><div class="compare-title">ADAPTIVE COMPUTATION</div><div class="grid-sample refined" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div><div class="compare-caption">Resolution increases where dynamics demand it.</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+    <section class="section">
+      <div class="wrap">
+        <div class="section-head"><div><div class="eyebrow">COMPUTATIONAL PIPELINE</div><h2>One simulation.<br>Multiple layers of acceleration.</h2></div><p class="section-intro">The framework connects physics, adaptive spatial resolution, heterogeneous execution and workload-aware MPI redistribution.</p></div>
+        <div class="architecture-steps">
+          <article class="arch-step"><div class="arch-num">01 / PHYSICS</div><h3>Finite-volume solver</h3><p>Shallow-water equations, hydrostatic reconstruction and Rusanov flux.</p></article>
+          <article class="arch-step"><div class="arch-num">02 / ADAPTIVITY</div><h3>Patch hierarchy</h3><p>Adaptive refinement and coarsening as the flow changes.</p></article>
+          <article class="arch-step"><div class="arch-num">03 / PARALLELISM</div><h3>Serial · OpenMP · MPI</h3><p>Compare execution backends against a serial reference.</p></article>
+          <article class="arch-step"><div class="arch-num">04 / BALANCING</div><h3>Dynamic MPI ownership</h3><p>Redistribute patch ownership when measured work is imbalanced.</p></article>
+          <article class="arch-step"><div class="arch-num">05 / EVIDENCE</div><h3>Maps · metrics · tests</h3><p>Inspect generated fields and measured benchmark records.</p></article>
+        </div>
+      </div>
+    </section>
+    <section class="section">
+      <div class="wrap">
+        <div class="section-head"><div><div class="eyebrow">FRAMEWORK CONTRIBUTIONS</div><h2>What makes this different?</h2></div><p class="section-intro">A focused implementation of adaptive flood computation, with numerical evidence surfaced alongside runtime results.</p></div>
+        <div class="feature-grid">
+          <article class="feature-card"><div class="feature-top"><span class="feature-index">01 — ADAPTIVE SPATIAL RESOLUTION</span><span class="feature-icon">⌗</span></div><h3>Spend resolution where it matters</h3><p>Computational resolution is concentrated around dynamically important regions rather than uniformly increasing the entire grid.</p></article>
+          <article class="feature-card"><div class="feature-top"><span class="feature-index">02 — HETEROGENEOUS EXECUTION</span><span class="feature-icon">⫶</span></div><h3>One physics, multiple backends</h3><p>The same physics-based solver is evaluated across Serial, OpenMP and MPI execution paths.</p></article>
+          <article class="feature-card"><div class="feature-top"><span class="feature-index">03 — DYNAMIC MPI BALANCING</span><span class="feature-icon">⇄</span></div><h3>Redistribute uneven work</h3><p>Adaptive refinement can create uneven workloads, so MPI ownership is dynamically redistributed when imbalance is significant.</p></article>
+          <article class="feature-card"><div class="feature-top"><span class="feature-index">04 — CONSERVATIVE COUPLING</span><span class="feature-icon">∑</span></div><h3>Preserve conservation across levels</h3><p>Coarse/fine interfaces and adaptive regridding are instrumented with conservation residuals in the solver and benchmarks.</p></article>
+        </div>
+      </div>
+    </section>
+    <section class="section" id="evidence">
+      <div class="wrap">
+        <div class="section-head"><div><div class="eyebrow">MEASURED, NOT SIMULATED</div><h2>Performance you can inspect.</h2></div><p class="section-intro">Experimental results are read directly from the adaptive benchmark summary. Unmeasured combinations are left out—not estimated.</p></div>
+        <div class="results-band">
+          <div class="result-metric"><div class="result-number" id="result-mpi">—</div><div class="result-label">MPI speedup · 4 ranks</div><div class="result-meta">1024² dam-break · uniform grid</div></div>
+          <div class="result-metric"><div class="result-number" id="result-openmp">—</div><div class="result-label">OpenMP speedup · 4 threads</div><div class="result-meta">1024² dam-break · uniform grid</div></div>
+          <div class="result-metric"><div class="result-number" id="result-imbalance">—</div><div class="result-label">Dynamic MPI workload imbalance</div><div class="result-meta">Before → after rebalance · localized refinement</div></div>
+          <div class="result-metric"><div class="result-number" id="result-cells">—</div><div class="result-label">Cells migrated</div><div class="result-meta">Localized-refinement MPI benchmark</div></div>
+        </div>
+        <div class="measured-label" style="margin-top:14px"><span class="pulse"></span> EXPERIMENTAL RESULTS · SOURCE CSV LOADED AT RUNTIME</div>
+      </div>
+    </section>
+    <section class="section">
+      <div class="wrap">
+        <div class="section-head"><div><div class="eyebrow">SPATIAL ADAPTIVITY / PARALLEL EXECUTION</div><h2>Refine the field.<br>Balance the work.</h2></div><p class="section-intro">Visual summaries are schematic. The dashboard reveals the actual refinement map and rank workload measurements produced by the solver.</p></div>
+        <div class="lab-grid">
+          <article class="lab-panel"><h3>Resolution follows the dynamics</h3><p class="muted small">Conceptual grid illustration · inspect generated level maps in the dashboard.</p><div class="refine-diagram"><div><div class="eyebrow">UNIFORM</div><div class="block-grid"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div></div><div><div class="eyebrow">ADAPTIVE</div><div class="block-grid adaptive"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div></div><div class="diagram-arrow">MORE RESOLUTION WHERE THE FLOOD DYNAMICS DEMAND IT</div></div></article>
+          <article class="lab-panel"><h3>One solver, parallel pathways</h3><div class="solver-diagram"><div class="solver-box">FINITE-VOLUME SOLVER</div><div class="solver-down">│</div><div class="solver-branches"><span>SERIAL</span><span>OPENMP</span><span>MPI</span></div><div class="solver-down">│</div><div class="solver-box">MPI PATCH OWNERSHIP</div><div class="solver-down">↓</div><div>REBALANCE → MIGRATE → CONTINUE</div></div></article>
+        </div>
+        <div class="balancing-flow" aria-label="Dynamic MPI load balancing workflow"><div class="flow-chip">COMPUTE</div><div class="flow-chip">DETECT IMBALANCE</div><div class="flow-chip">REPARTITION</div><div class="flow-chip">MIGRATE</div><div class="flow-chip">REBUILD COMMUNICATION</div><div class="flow-chip">CONTINUE</div></div>
+      </div>
+    </section>
+    <section class="section">
+      <div class="wrap">
+        <div class="section-head"><div><div class="eyebrow">NUMERICAL TRUST</div><h2>Performance is only useful if the physics remain correct.</h2></div><p class="section-intro">The repository's regression suite checks backend consistency, stability, conservation and deterministic adaptive behavior.</p></div>
+        <div class="results-band" style="grid-template-columns:1fr 1fr">
+          <div class="result-metric"><div class="result-number" id="landing-validation">—</div><div class="result-label">Latest local CTest record</div><div class="result-meta" id="landing-residual">Measured conservation residual · N/A</div></div>
+          <div class="result-metric"><div class="result-number" id="landing-interface">—</div><div class="result-label">Interface conservation residual</div><div class="result-meta">Maximum absolute value in benchmark summary · N/A</div></div>
+        </div>
+      </div>
+    </section>
+    <section class="wrap closing">
+      <div class="eyebrow">FROM MODEL TO MEASUREMENT</div><h2>Explore the simulation.</h2>
+      <p>Run simulations, inspect adaptive resolution, compare parallel backends, and examine measured performance from the framework.</p>
+      <button class="button primary" data-enter>ENTER THE SIMULATION DASHBOARD <span>→</span></button>
+      <div class="ribbon-source">PHYSICS-BASED <span>·</span> ADAPTIVE <span>·</span> PARALLEL <span>·</span> VALIDATED</div>
+    </section>
+  </main>
+</section>
+
+<div class="app" id="dashboard" hidden>
+  <aside class="sidebar">
+    <div class="side-brand"><a class="brand" href="#" data-home><span class="brand-mark">≈</span><span>ADAPTIVE FLOOD<small>RESEARCH CONSOLE</small></span></a></div>
+    <div class="side-label">SIMULATION</div>
+    <nav class="nav-list" aria-label="Dashboard navigation">
+      <button class="nav-btn active" data-page="overview"><span class="nav-icon">⌂</span>OVERVIEW</button>
+      <button class="nav-btn" data-page="simulate"><span class="nav-icon">▶</span>SIMULATE</button>
+      <button class="nav-btn" data-page="flood-map"><span class="nav-icon">▦</span>FLOOD MAP</button>
+      <button class="nav-btn" data-page="adaptive-mesh"><span class="nav-icon">⌗</span>ADAPTIVE MESH</button>
+      <div class="side-label">ANALYSIS</div>
+      <button class="nav-btn" data-page="performance"><span class="nav-icon">⌁</span>PERFORMANCE</button>
+      <button class="nav-btn" data-page="load-balancing"><span class="nav-icon">⇄</span>LOAD BALANCING</button>
+      <button class="nav-btn" data-page="validation"><span class="nav-icon">✓</span>VALIDATION</button>
+      <button class="nav-btn" data-page="architecture"><span class="nav-icon">⌘</span>ARCHITECTURE</button>
+    </nav>
+    <div class="side-foot">LOCAL SOLVER STATUS<br><b id="side-backends">CHECKING CAPABILITIES…</b><br>MEASURED DATA ONLY</div>
+  </aside>
+  <div class="app-main">
+    <header class="app-top"><div class="app-top-left"><span class="crumb">ADAPTIVE FLOOD /</span><span class="crumb"><strong id="breadcrumb">OVERVIEW</strong></span></div><div class="app-top-right"><span class="connection"><i class="pulse"></i> LOCAL SESSION</span><button class="button compact" data-home>LANDING PAGE ↗</button></div></header>
+    <main class="page-content">
+      <section class="page active" id="page-overview" data-title="OVERVIEW">
+        <div class="page-title-row"><div class="page-title"><div class="eyebrow">CURRENT SESSION</div><h1>Simulation Overview</h1><p>Inspect the latest generated run, solver configuration and benchmark evidence.</p></div><button class="button primary" data-go="simulate">RUN SIMULATION <span>→</span></button></div>
+        <div class="grid-4">
+          <div class="dash-metric"><div class="metric-label">SCENARIO / BACKEND</div><div class="metric-value" id="overview-scenario">—</div><div class="metric-hint" id="overview-backend">No run selected</div></div>
+          <div class="dash-metric"><div class="metric-label">GRID / ADAPTIVITY</div><div class="metric-value" id="overview-grid">—</div><div class="metric-hint" id="overview-adaptive">—</div></div>
+          <div class="dash-metric"><div class="metric-label">RUNTIME</div><div class="metric-value" id="overview-runtime">—</div><div class="metric-hint">C++ solver timing</div></div>
+          <div class="dash-metric"><div class="metric-label">MAXIMUM DEPTH</div><div class="metric-value" id="overview-depth">—</div><div class="metric-hint">Generated output</div></div>
+        </div>
+        <div class="overview-grid">
+          <section class="panel"><div class="panel-head"><h2>LATEST FLOOD FIELD</h2><span class="tag"><i class="tag-dot"></i> GENERATED OUTPUT</span></div><div class="output-frame"><canvas class="output-canvas" id="overviewMap" width="900" height="500"></canvas><div class="empty-overlay" id="overviewEmpty"><div><b>No generated depth field</b>Run a simulation to create a flood map from solver output.</div></div></div><div class="output-foot"><span id="overviewMapMeta">OUTPUT NOT AVAILABLE</span><span class="legend"><em>SHALLOW</em><i></i><i></i><i></i><i></i><em>DEEP</em> FLOOD DEPTH / M</span></div></section>
+          <section class="panel"><div class="panel-head"><h2>RUN SUMMARY</h2><span id="overviewState" class="status-pill">AWAITING RUN</span></div><div class="run-summary"><div class="summary-row"><span>Active cells</span><strong id="overview-active">—</strong></div><div class="summary-row"><span>Wet cells</span><strong id="overview-wet">—</strong></div><div class="summary-row"><span>Simulation time</span><strong id="overview-time">—</strong></div><div class="summary-row"><span>Mass balance residual</span><strong id="overview-residual">—</strong></div><div class="summary-row"><span>Numerical comparison</span><strong id="overview-validation">—</strong></div><div class="summary-row"><span>Latest benchmark family</span><strong>Measured CSV</strong></div></div><button class="button compact" style="margin-top:17px" data-go="performance">VIEW BENCHMARKS →</button></section>
+        </div>
+        <div class="overview-grid">
+          <section class="panel"><div class="panel-head"><h2>MEASURED PARALLEL SPEEDUP</h2><span class="tag">1024² · DAM BREAK</span></div><div id="overviewBenchmarkBars" class="chart-list"></div></section>
+          <section class="panel"><div class="panel-head"><h2>ADAPTIVE SUMMARY</h2><span class="tag">BENCHMARK RECORD</span></div><div class="run-summary"><div class="summary-row"><span>Active leaf cells</span><strong id="overviewBenchCells">—</strong></div><div class="summary-row"><span>Active / base cells</span><strong id="overviewBenchRatio">—</strong></div><div class="summary-row"><span>Maximum level</span><strong id="overviewBenchLevel">—</strong></div><div class="summary-row"><span>Mass residual</span><strong id="overviewBenchResidual">—</strong></div></div></section>
+        </div>
+      </section>
+
+      <section class="page" id="page-simulate" data-title="SIMULATE">
+        <div class="page-title-row"><div class="page-title"><div class="eyebrow">CONFIGURATION / EXECUTION</div><h1>Run a simulation</h1><p>Configure a solver run. Physics and numerical updates are executed by the C++ application.</p></div></div>
+        <div class="form-layout">
+          <form class="panel form-panel" id="runForm">
+            <div class="panel-head"><h2>SIMULATION CONFIGURATION</h2><span class="tag">LOCAL C++ SOLVER</span></div>
+            <div class="form-fields">
+              <div class="field"><label for="scenario">Scenario</label><select id="scenario" name="scenario"><option value="dam-break">Dam break</option><option value="rain-drain">Rainfall / drainage</option><option value="localized-refinement">Localized refinement</option></select></div>
+              <div class="field"><label for="backend">Backend</label><select id="backend" name="backend"><!-- BACKEND_OPTIONS --></select></div>
+              <div class="field" id="threadsField" hidden><label for="threads">OpenMP threads</label><select id="threads" name="threads"><option>1</option><option>2</option><option selected>4</option></select></div>
+              <div class="field" id="ranksField" hidden><label for="processes">MPI ranks</label><select id="processes" name="processes"><option>1</option><option>2</option><option selected>4</option></select></div>
+              <div class="field"><label for="rows">Grid rows</label><input id="rows" name="rows" type="number" min="8" max="1024" value="64" required></div>
+              <div class="field"><label for="cols">Grid columns</label><input id="cols" name="cols" type="number" min="8" max="1024" value="64" required></div>
+              <div class="field full"><label for="duration">Simulation duration / seconds</label><input id="duration" name="duration" type="number" min=".01" max="600" step=".01" value=".12" required></div>
+              <div class="form-divider"><h3>Adaptive refinement</h3></div>
+              <label class="check-field field full"><input id="adaptive" name="adaptive" type="checkbox" value="true"> Enable adaptive mesh refinement</label>
+              <div class="field adaptive-field" hidden><label for="maxLevel">Maximum level</label><select id="maxLevel" name="max_level"><option>0</option><option>1</option><option selected>2</option></select></div>
+              <div class="field adaptive-field" hidden><label for="patchExtent">Patch extent</label><select id="patchExtent" name="patch_extent"><option>4</option><option selected>8</option><option>16</option></select></div>
+              <div class="field adaptive-field" hidden><label for="regridInterval">Regrid interval / steps</label><input id="regridInterval" name="regrid_interval" type="number" min="1" value="2"></div>
+              <div class="field adaptive-field" hidden><label for="refineThreshold">Refinement threshold</label><input id="refineThreshold" name="refine_threshold" type="number" min=".000001" step="any" value=".10"></div>
+              <div class="field adaptive-field" hidden><label for="coarsenThreshold">Coarsening threshold</label><input id="coarsenThreshold" name="coarsen_threshold" type="number" min="0" step=".01" value=".05"></div>
+              <div class="form-divider mpi-adaptive" hidden><h3>Dynamic MPI balancing</h3></div>
+              <label class="check-field field full mpi-adaptive" hidden><input id="dynamicBalance" name="dynamic_load_balancing" type="checkbox" value="true"> Enable dynamic load balancing</label>
+              <div class="field mpi-adaptive" hidden><label for="imbalanceThreshold">Imbalance threshold</label><input id="imbalanceThreshold" name="imbalance_threshold" type="number" min="1" max="10" step=".01" value="1.20"></div>
+              <div class="field mpi-adaptive" hidden><label for="rebalanceCooldown">Rebalance cooldown / steps</label><input id="rebalanceCooldown" name="rebalance_cooldown" type="number" min="0" value="10"></div>
+              <p class="form-note field full">Backend choices are limited to capabilities detected from the selected local build. An unavailable backend is not benchmarked or emulated.</p>
+            </div>
+            <button class="button primary" id="runButton" type="submit">RUN SIMULATION <span>→</span></button>
+            <div class="status-message" id="runMessage" role="status">Ready. Configure a scenario and start a run.</div>
+          </form>
+          <div>
+            <section class="panel"><div class="panel-head"><h2>LIVE OUTPUT / FLOOD DEPTH</h2><span class="tag" id="runMapTag">NO NEW RUN</span></div><div class="output-frame"><canvas class="output-canvas" id="runMap" width="900" height="500"></canvas><div class="empty-overlay" id="runEmpty"><div><b>Waiting for solver output</b>The map is drawn from depth.csv after the run completes.</div></div></div><div class="output-foot"><span id="runMapMeta">NO GENERATED FIELD</span><span class="legend"><em>SHALLOW</em><i></i><i></i><i></i><i></i><em>DEEP</em> FLOOD DEPTH / M</span></div></section>
+            <section class="panel"><div class="panel-head"><h2>COMPLETION METRICS</h2><span class="tag">MEASURED FOR THIS RUN</span></div><div class="run-metrics">
+              <div class="dash-metric"><div class="metric-label">BACKEND</div><div class="metric-value" id="runBackend">—</div></div><div class="dash-metric"><div class="metric-label">RUNTIME</div><div class="metric-value" id="runRuntime">—</div></div><div class="dash-metric"><div class="metric-label">SPEEDUP</div><div class="metric-value" id="runSpeedup">—</div></div><div class="dash-metric"><div class="metric-label">MAX DEPTH</div><div class="metric-value" id="runMaxDepth">—</div></div><div class="dash-metric"><div class="metric-label">ACTIVE CELLS</div><div class="metric-value" id="runActiveCells">—</div></div><div class="dash-metric"><div class="metric-label">MASS RESIDUAL</div><div class="metric-value" id="runResidual">—</div></div>
+            </div></section>
+          </div>
+        </div>
+      </section>
+
+      <section class="page" id="page-flood-map" data-title="FLOOD MAP">
+        <div class="page-title-row"><div class="page-title"><div class="eyebrow">SCIENTIFIC VISUALIZATION</div><h1>Flood map</h1><p>Visualize the latest solver output. No synthetic map data is generated.</p></div></div>
+        <section class="panel"><div class="panel-head"><h2 id="mapPanelTitle">TERRAIN + FLOOD DEPTH</h2><span class="tag" id="floodMapTag">LATEST GENERATED FIELD</span></div><div class="output-frame tall"><canvas class="output-canvas" id="floodMap" width="1000" height="620"></canvas><div class="empty-overlay" id="floodMapEmpty"><div><b>Simulation output not available</b>Run an available solver to generate a depth field.</div></div></div><div class="output-foot"><span id="floodMapMeta">NO GENERATED FIELD</span><span>MODEL-DOMAIN COORDINATES · DRAG TO PAN · SCROLL TO ZOOM</span></div></section>
+        <div class="grid-4" style="margin-top:12px"><div class="dash-metric"><div class="metric-label">MAXIMUM DEPTH</div><div class="metric-value" id="mapMaxDepth">—</div></div><div class="dash-metric"><div class="metric-label">MEAN DEPTH</div><div class="metric-value" id="mapMeanDepth">—</div></div><div class="dash-metric"><div class="metric-label">WET CELLS</div><div class="metric-value" id="mapWetCells">—</div></div><div class="dash-metric"><div class="metric-label">SIMULATION TIME</div><div class="metric-value" id="mapTime">—</div></div></div>
+      </section>
+
+      <section class="page" id="page-adaptive-mesh" data-title="ADAPTIVE MESH">
+        <div class="page-title-row"><div class="page-title"><div class="eyebrow">PATCH HIERARCHY</div><h1>Adaptive mesh</h1><p>Inspect actual refinement levels from generated adaptive output and benchmark records.</p></div><span class="status-pill" id="meshStatus">AWAITING ADAPTIVE OUTPUT</span></div>
+        <div class="overview-grid">
+          <section class="panel"><div class="panel-head"><h2>REFINEMENT OVER TERRAIN</h2><span class="tag">LEVELS FROM SOLVER OUTPUT</span></div><div class="output-frame mid"><canvas class="output-canvas" id="meshMap" width="900" height="520"></canvas><div class="empty-overlay" id="meshEmpty"><div><b>No refinement map available</b>Enable adaptive refinement in a simulation run to produce refinement.csv.</div></div></div><div class="output-foot"><span id="meshMapMeta">NO GENERATED REFINEMENT MAP</span><span>OUTLINES: LEVEL 1 · LEVEL 2</span></div></section>
+          <section class="panel"><div class="panel-head"><h2>REGRIDDING SUMMARY</h2><span class="tag">LATEST RUN</span></div><div class="run-summary"><div class="summary-row"><span>Base cells</span><strong id="meshBaseCells">—</strong></div><div class="summary-row"><span>Active leaf cells</span><strong id="meshLeafCells">—</strong></div><div class="summary-row"><span>Active cell ratio</span><strong id="meshRatio">—</strong></div><div class="summary-row"><span>Maximum configured level</span><strong id="meshLevel">—</strong></div><div class="summary-row"><span>Refined patches</span><strong id="meshRefined">—</strong></div><div class="summary-row"><span>Coarsened patches</span><strong id="meshCoarsened">—</strong></div><div class="summary-row"><span>Regrid count</span><strong id="meshRegrids">N/A</strong></div></div></section>
+        </div>
+        <section class="panel" style="margin-top:12px"><div class="panel-head"><h2>UNIFORM VS ADAPTIVE</h2><span class="tag">MEASURED CELLS · BENCHMARK CSV</span></div><div class="grid-2"><div class="dash-metric"><div class="metric-label">UNIFORM BASE CELLS</div><div class="metric-value" id="meshUniformCells">—</div></div><div class="dash-metric"><div class="metric-label">ADAPTIVE ACTIVE LEAF CELLS</div><div class="metric-value" id="meshBenchCells">—</div></div></div><p class="page-bottom-note">Only like-for-like benchmark configurations are compared. If the CSV has no matching uniform row, the value is N/A. No second flood field is synthesized.</p></section>
+      </section>
+
+      <section class="page" id="page-performance" data-title="PERFORMANCE">
+        <div class="page-title-row"><div class="page-title"><div class="eyebrow">EXPERIMENTAL RESULTS</div><h1>Performance</h1><p>Measured benchmark medians only. Each displayed result comes from the selected scenario and grid size.</p></div><span class="measured-label"><i class="pulse"></i> SOURCE CSV</span></div>
+        <section class="panel"><div class="data-controls">
+          <div class="field"><label for="perfScenario">Scenario</label><select id="perfScenario"><option value="dam-break">Dam break</option><option value="rain-drain">Rainfall / drainage</option><option value="localized-refinement">Localized refinement</option></select></div>
+          <div class="field"><label for="perfBackend">Backend filter</label><select id="perfBackend"><option value="all">All backends</option><option value="serial">Serial</option><option value="openmp">OpenMP</option><option value="mpi">MPI</option></select></div>
+          <div class="field"><label for="perfGrid">Grid size</label><select id="perfGrid"><option value="1024">1024 × 1024</option><option value="512">512 × 512</option><option value="all">All measured sizes</option></select></div>
+          <span class="tag" id="performanceSource">LOADING FINAL-SUMMARY.CSV</span>
+        </div><div id="performanceChart" class="chart-list"></div><div class="table-wrap"><table><thead><tr><th>Family</th><th>Scenario</th><th>Grid</th><th>Backend</th><th>Workers</th><th>Median runtime</th><th>Speedup</th><th>Efficiency</th><th>Active cells</th></tr></thead><tbody id="performanceRows"></tbody></table></div><div id="performanceEmpty" class="no-data" hidden>No measured rows match these filters. This configuration was not benchmarked.</div></section>
+        <p class="page-bottom-note">Source: benchmarks/adaptive/final-summary.csv. Runtime units are seconds; speedup and efficiency are values recorded by the benchmark. No interpolation is performed.</p>
+      </section>
+
+      <section class="page" id="page-load-balancing" data-title="LOAD BALANCING">
+        <div class="page-title-row"><div class="page-title"><div class="eyebrow">DYNAMIC MPI OWNERSHIP</div><h1>Balance the adaptive workload.</h1><p>Inspect recorded pre/post rebalance imbalance, patch/cell migrations and timing.</p></div><span class="measured-label"><i class="pulse"></i> MEASURED RECORDS</span></div>
+        <section class="panel"><div class="data-controls"><div class="field"><label for="balanceScenario">Scenario</label><select id="balanceScenario"><option value="localized-refinement">Localized refinement</option><option value="dam-break">Dam break</option><option value="rain-drain">Rainfall / drainage</option></select></div><div class="field"><label for="balanceGrid">Grid</label><select id="balanceGrid"><option value="all">All measured sizes</option><option value="32">32 × 32</option><option value="64">64 × 64</option><option value="128">128 × 128</option><option value="256">256 × 256</option><option value="512">512 × 512</option></select></div></div>
+          <div class="grid-4"><div class="dash-metric"><div class="metric-label">PRE-REBALANCE</div><div class="metric-value" id="balBefore">—</div><div class="metric-hint">Imbalance ratio</div></div><div class="dash-metric"><div class="metric-label">POST-REBALANCE</div><div class="metric-value" id="balAfter">—</div><div class="metric-hint">Imbalance ratio</div></div><div class="dash-metric"><div class="metric-label">MIGRATED PATCHES</div><div class="metric-value" id="balPatches">—</div><div class="metric-hint">Recorded MPI migration</div></div><div class="dash-metric"><div class="metric-label">MIGRATED CELLS</div><div class="metric-value" id="balCells">—</div><div class="metric-hint">Recorded leaf cells</div></div></div>
+          <div class="overview-grid"><div class="panel" style="margin-top:12px"><div class="panel-head"><h3>WORK DISTRIBUTION / MEASURED IMBALANCE</h3><span class="tag">PRE → POST</span></div><div class="workload-chart"><div class="workload-group"><div class="workload-title">Before rebalance</div><div class="rank-bars" id="beforeBars"></div></div><div class="workload-group"><div class="workload-title">After rebalance</div><div class="rank-bars" id="afterBars"></div></div></div><div class="workload-legend">Bars visualize normalized imbalance ratios read from the benchmark record; per-rank synthetic workloads are not generated.</div></div>
+          <div class="panel" style="margin-top:12px"><div class="panel-head"><h3>REBALANCE COST</h3><span class="tag">MEASURED</span></div><div class="run-summary"><div class="summary-row"><span>Migration time</span><strong id="balTime">—</strong></div><div class="summary-row"><span>Migration count</span><strong id="balCount">—</strong></div><div class="summary-row"><span>Overall workload imbalance</span><strong id="balOverall">—</strong></div><div class="summary-row"><span>Benchmark grid / ranks</span><strong id="balConfig">—</strong></div></div></div></div>
+          <div class="table-wrap"><table><thead><tr><th>Grid</th><th>Ranks</th><th>Pre</th><th>Post</th><th>Migration count</th><th>Patches</th><th>Cells</th><th>Migration time</th></tr></thead><tbody id="balanceRows"></tbody></table></div><div id="balanceEmpty" class="no-data" hidden>No dynamic MPI records match this scenario. No workload is synthesized.</div>
+        </section>
+        <div class="balancing-flow"><div class="flow-chip">COMPUTE</div><div class="flow-chip">DETECT IMBALANCE</div><div class="flow-chip">REPARTITION</div><div class="flow-chip">MIGRATE</div><div class="flow-chip">REBUILD COMMUNICATION</div><div class="flow-chip">CONTINUE</div></div>
+        <p class="page-bottom-note">Source: benchmarks/adaptive/final-summary.csv. Rank bars express recorded imbalance ratios only, not inferred per-rank cell counts.</p>
+      </section>
+
+      <section class="page" id="page-validation" data-title="VALIDATION">
+        <div class="page-title-row"><div class="page-title"><div class="eyebrow">NUMERICAL REGRESSION EVIDENCE</div><h1>Validation</h1><p>Backend equivalence and adaptive conservation checks are grounded in repository tests and recorded benchmark residuals.</p></div><span id="validationStatus" class="status-pill">CHECKING TEST RECORD</span></div>
+        <section class="panel"><div class="panel-head"><h2>REGRESSION TEST COVERAGE</h2><span class="tag">CTEST · LATEST LOCAL RECORD</span></div><div class="validation-list">
+          <div class="validation-item"><span class="validation-check">✓</span><div><strong>Serial reference equivalence</strong><small>Depth and conserved-state comparison</small></div></div>
+          <div class="validation-item"><span class="validation-check">✓</span><div><strong>OpenMP numerical equivalence</strong><small>Parallel backend regression tests</small></div></div>
+          <div class="validation-item"><span class="validation-check">✓</span><div><strong>MPI numerical equivalence</strong><small>MPI consistency tests when built</small></div></div>
+          <div class="validation-item"><span class="validation-check">✓</span><div><strong>Lake-at-rest equilibrium</strong><small>Adaptive lake-at-rest tests</small></div></div>
+          <div class="validation-item"><span class="validation-check">✓</span><div><strong>Dam-break propagation</strong><small>Front evolution and solver regression</small></div></div>
+          <div class="validation-item"><span class="validation-check">✓</span><div><strong>Wet/dry stability and positivity</strong><small>Nonnegative depth and finite state</small></div></div>
+          <div class="validation-item"><span class="validation-check">✓</span><div><strong>Rainfall / drainage</strong><small>Forcing, infiltration and water budget</small></div></div>
+          <div class="validation-item"><span class="validation-check">✓</span><div><strong>Coarse/fine interface conservation</strong><small>Integrated flux residual checks</small></div></div>
+          <div class="validation-item"><span class="validation-check">✓</span><div><strong>Regridding conservation</strong><small>Refinement transfer and mass residuals</small></div></div>
+          <div class="validation-item"><span class="validation-check">✓</span><div><strong>Deterministic adaptive traversal</strong><small>Repeatability regression tests</small></div></div>
+          <div class="validation-item"><span class="validation-check">✓</span><div><strong>Load-balance threshold and cooldown</strong><small>Migration policy regression tests</small></div></div>
+          <div class="validation-item"><span class="validation-check">✓</span><div><strong>Output generation</strong><small>Generated CSV results and diagnostics</small></div></div>
+        </div><p class="page-bottom-note" id="validationRecord">Test coverage is sourced from the C++ CTest suite; the live result reflects the latest build-mpi CTest log when available.</p><p class="page-bottom-note" id="validationTolerances">Recorded comparison tolerances: N/A</p></section>
+        <div class="grid-3" style="margin-top:12px"><div class="dash-metric"><div class="metric-label">MAX MASS-BALANCE RESIDUAL</div><div class="metric-value" id="validationMass">N/A</div><div class="metric-hint">Max absolute value in final-summary.csv</div></div><div class="dash-metric"><div class="metric-label">MAX INTERFACE RESIDUAL</div><div class="metric-value" id="validationInterface">N/A</div><div class="metric-hint">Max absolute value in final-summary.csv</div></div><div class="dash-metric"><div class="metric-label">BENCHMARK ROWS</div><div class="metric-value" id="validationRows">—</div><div class="metric-hint">Rows loaded from measured summary</div></div></div>
+      </section>
+
+      <section class="page" id="page-architecture" data-title="ARCHITECTURE">
+        <div class="page-title-row"><div class="page-title"><div class="eyebrow">IMPLEMENTATION OVERVIEW</div><h1>From terrain to measured output.</h1><p>Architecture reflects the implemented solver pathways and output records.</p></div></div>
+        <div class="architecture-flow">
+          <article class="architecture-node"><div class="architecture-index">01</div><div><h3>INPUT / SCENARIO</h3><p>Terrain and rainfall inputs · built-in dam-break and rainfall/drainage scenarios.</p></div></article>
+          <article class="architecture-node"><div class="architecture-index">02</div><div><h3>GRID / STATE</h3><p>Uniform Cartesian grid or adaptive patch hierarchy with conserved water state.</p></div></article>
+          <article class="architecture-node"><div class="architecture-index">03</div><div><h3>FINITE-VOLUME SOLVER</h3><p>Shallow-water equations · hydrostatic reconstruction · Rusanov flux · CFL timestep.</p></div></article>
+          <article class="architecture-node"><div class="architecture-index">04</div><div><h3>ADAPTIVITY</h3><p>Patch refinement and coarsening · coarse/fine interfaces · regridding diagnostics.</p></div></article>
+          <article class="architecture-node"><div class="architecture-index">05</div><div><h3>PARALLEL EXECUTION</h3><p>Serial reference · OpenMP shared-memory execution · MPI distributed-memory execution where available.</p></div></article>
+          <article class="architecture-node"><div class="architecture-index">06</div><div><h3>DYNAMIC LOAD BALANCING</h3><p>Weighted MPI patch ownership · measured workload imbalance · patch and cell migration.</p></div></article>
+          <article class="architecture-node"><div class="architecture-index">07</div><div><h3>OUTPUT / EVIDENCE</h3><p>Generated depth and refinement maps · benchmark timing · conservation residuals · validation tests.</p></div></article>
+        </div>
+        <div class="tech-pills"><span>C++17</span><span>OPENMP</span><span>MPI</span><span>PYTHON UI</span><span>ADAPTIVE PATCHES</span><span>FINITE VOLUME</span></div>
+        <p class="page-bottom-note">The UI is a local subprocess client. It does not implement or modify solver physics.</p>
+      </section>
+    </main>
+  </div>
+</div>
+
+<script>
+const landing=document.querySelector('#landing'),dashboard=document.querySelector('#dashboard');
+const scenarioNames={'dam-break':'Dam break','rain-drain':'Rainfall / drainage','localized-refinement':'Localized refinement'};
+const benchmarkCache=new Map();
+let activeRunSummary=null,lastScene=null,lastStats=null;
+function text(id,value){const element=document.getElementById(id);if(element)element.textContent=value}
+function numeric(value){if(value===undefined||value===null||value===''||!Number.isFinite(Number(value)))return null;return Number(value)}
+function displayNumber(value,digits=3,suffix=''){const n=numeric(value);return n===null?'N/A':n.toFixed(digits)+suffix}
+function countText(value){const n=numeric(value);return n===null?'N/A':Math.round(n).toLocaleString()}
+function csvGrid(source){const lines=source.trim().split(/\r?\n/).filter(Boolean);if(!lines.length)return [];return lines.map(line=>line.split(',').map(value=>Number(value.trim())))}
+const DRY_DEPTH=1e-6,MAP_BG=[16,26,27];
+const clamp=(v,a,b)=>v<a?a:v>b?b:v,clamp01=v=>v<0?0:v>1?1:v;
+function rampColor(stops,t){
+  if(t<=stops[0][0])return stops[0][1];
+  for(let i=1;i<stops.length;i++){
+    if(t<=stops[i][0]){const [t0,c0]=stops[i-1],[t1,c1]=stops[i],u=(t-t0)/(t1-t0);return c0.map((value,k)=>value+(c1[k]-value)*u)}
+  }
+  return stops[stops.length-1][1];
+}
+const LAND_STOPS=[[0,[98,120,74]],[.5,[130,127,83]],[.8,[150,123,91]],[1,[174,150,120]]];
+const FLAT_LAND=[112,122,78],PLAIN_LAND=[56,64,58];
+const WATER_STOPS=[[0,[178,226,239,.40]],[.2,[104,190,226,.62]],[.5,[38,127,194,.80]],[1,[10,47,108,.95]]];
+const waterTone=t=>Math.pow(clamp01(t),.65);
+const fmtM=v=>Math.abs(v)>=.01||v===0?v.toFixed(3):v.toExponential(1);
+const rgb=c=>`rgb(${Math.round(c[0])},${Math.round(c[1])},${Math.round(c[2])})`;
+const waterGradientCss=()=>`linear-gradient(90deg,${[0,.2,.4,.6,.8,1].map(t=>rgb(rampColor(WATER_STOPS,waterTone(t)))).join(',')})`;
+const landGradientCss=()=>`linear-gradient(90deg,${[0,.33,.66,1].map(t=>rgb(rampColor(LAND_STOPS,t))).join(',')})`;
+
+function buildScene(depthGrid,terrainGrid,refinementGrid,cell){
+  const rows=depthGrid.length,cols=depthGrid[0].length,n=rows*cols;
+  const dw=new Float32Array(n),wm=new Float32Array(n);
+  let dmax=0,dmin=Infinity,wet=0,total=0;
+  for(let r=0;r<rows;r++)for(let c=0;c<cols;c++){
+    const v=depthGrid[r][c],d=Number.isFinite(v)?v:0;
+    total+=d;
+    if(d>DRY_DEPTH){dw[r*cols+c]=d;wm[r*cols+c]=1;wet++;dmax=Math.max(dmax,d);dmin=Math.min(dmin,d)}
+  }
+  const scene={rows,cols,dw,wm,dmax,dmin:wet?dmin:0,wet,mean:total/n,cell:cell>0?cell:null,terrain:null,refine:null,relief:false,zmin:0,zmax:0,maxGrad:0};
+  const validTerrain=terrainGrid&&terrainGrid.length===rows&&terrainGrid.every(row=>row.length===cols&&row.every(Number.isFinite));
+  if(validTerrain){
+    const z=new Float32Array(n);let zmin=Infinity,zmax=-Infinity;
+    for(let r=0;r<rows;r++)for(let c=0;c<cols;c++){const v=terrainGrid[r][c];z[r*cols+c]=v;zmin=Math.min(zmin,v);zmax=Math.max(zmax,v)}
+    scene.terrain=z;scene.zmin=zmin;scene.zmax=zmax;scene.relief=zmax-zmin>1e-9;
+    if(scene.relief){
+      let g=0;
+      for(let r=0;r<rows;r++)for(let c=0;c<cols;c++){
+        const gx=(z[r*cols+Math.min(c+1,cols-1)]-z[r*cols+Math.max(c-1,0)])/2,gy=(z[Math.min(r+1,rows-1)*cols+c]-z[Math.max(r-1,0)*cols+c])/2;
+        g=Math.max(g,Math.hypot(gx,gy));
+      }
+      scene.maxGrad=g;
+    }
+  }
+  if(refinementGrid&&refinementGrid.length&&refinementGrid[0].length&&refinementGrid.every(row=>row.every(Number.isFinite))){
+    const rr=refinementGrid.length,rc=refinementGrid[0].length,data=new Uint8Array(rr*rc);let max=0,min=Infinity;
+    for(let r=0;r<rr;r++)for(let c=0;c<rc;c++){const v=Math.max(0,Math.round(refinementGrid[r][c]));data[r*rc+c]=v;max=Math.max(max,v);min=Math.min(min,v)}
+    scene.refine={rows:rr,cols:rc,data,max,min};
+  }
+  return scene;
+}
+
+class FloodViewer{
+  constructor(canvas,{variant='full',mode='water',hero=false}={}){
+    this.canvas=canvas;this.frame=canvas.parentElement;this.hero=hero;this.variant=variant;this.startMode=mode;
+    this.ctx=canvas.getContext('2d');this.scene=null;this.view={k:1,x:0,y:0};this.reveal=1;this.dpr=1;this.queued=false;
+    this.layers=this.defaultLayers();this.frame.classList.add('gis');
+    if(!hero)this.buildControls();
+    new ResizeObserver(()=>this.resize()).observe(this.frame);
+    if(!hero)this.bindPointer();
+  }
+  defaultLayers(){
+    const m=this.startMode;
+    return {water:m!=='refinement',terrain:true,contours:false,grid:false,refine:m!=='water',urban:false};
+  }
+  buildControls(){
+    const full=this.variant==='full',f=this.frame;
+    const layerRows=[['water','Flood water'],['terrain','Terrain'],['contours','Terrain contours'],['grid','Computational grid'],['refine','Refinement level'],['urban','Illustrative urban context']];
+    f.insertAdjacentHTML('beforeend',`
+      <div class="gis-zoom" aria-label="Map zoom controls"><button type="button" data-act="in" aria-label="Zoom in">+</button><button type="button" data-act="out" aria-label="Zoom out">−</button><button type="button" data-act="fit">FIT</button><button type="button" data-act="reset">RESET</button></div>
+      ${full?`<div class="gis-mode" role="group" aria-label="Map mode"><button type="button" data-mode="water">WATER</button><button type="button" data-mode="refinement">REFINEMENT</button><button type="button" data-mode="combined">COMBINED</button></div>
+      <div class="gis-layers"><div class="gis-title">LAYERS</div>${layerRows.map(([key,label])=>`<label data-layer-row="${key}"><input type="checkbox" data-layer="${key}"><span>${label}</span></label>`).join('')}</div>`:''}
+      <div class="gis-legend"></div><div class="gis-cursor" hidden></div><div class="gis-tip" hidden></div>`);
+    this.legendEl=f.querySelector('.gis-legend');this.cursorEl=f.querySelector('.gis-cursor');this.tipEl=f.querySelector('.gis-tip');
+    f.querySelectorAll('[data-act]').forEach(b=>b.addEventListener('click',()=>this.action(b.dataset.act)));
+    f.querySelectorAll('[data-mode]').forEach(b=>b.addEventListener('click',()=>this.setMode(b.dataset.mode)));
+    f.querySelectorAll('[data-layer]').forEach(b=>b.addEventListener('change',()=>{this.layers[b.dataset.layer]=b.checked;this.syncControls();this.schedule()}));
+    this.syncControls();
+  }
+  action(kind){
+    const g=this.geom();
+    if(kind==='in')this.zoomAt(1.4,g.W/2,g.H/2);
+    else if(kind==='out')this.zoomAt(1/1.4,g.W/2,g.H/2);
+    else if(kind==='fit')this.view={k:1,x:0,y:0};
+    else if(kind==='reset'){this.view={k:1,x:0,y:0};this.layers=this.defaultLayers();this.normalizeLayers()}
+    this.syncControls();this.schedule();
+  }
+  setMode(mode){
+    if(mode==='refinement'&&!this.scene?.refine)return;
+    Object.assign(this.layers,{water:mode!=='refinement',refine:mode!=='water'});
+    this.syncControls();this.schedule();
+  }
+  normalizeLayers(){
+    if(!this.scene?.refine&&this.layers.refine){this.layers.refine=false;this.layers.water=true}
+    if(!this.scene?.relief)this.layers.contours=false;
+  }
+  syncControls(){
+    if(!this.legendEl)return;
+    const L=this.layers,sc=this.scene;
+    this.frame.querySelectorAll('[data-layer]').forEach(box=>{
+      const key=box.dataset.layer;box.checked=Boolean(L[key]);
+      const off=(key==='refine'&&!sc?.refine)||(key==='contours'&&!sc?.relief);
+      box.disabled=off;box.closest('label').classList.toggle('off',off);
+      box.closest('label').title=off?(key==='refine'?'No refinement map in this run':'No terrain relief in this output'):'';
+    });
+    const mode=L.water&&!L.refine?'water':!L.water&&L.refine?'refinement':L.water&&L.refine?'combined':'';
+    this.frame.querySelectorAll('[data-mode]').forEach(b=>{
+      b.classList.toggle('active',b.dataset.mode===mode);
+      b.disabled=b.dataset.mode!=='water'&&!sc?.refine;
+    });
+    this.renderLegend();
+  }
+  setScene(scene){
+    this.scene=scene;this.view={k:1,x:0,y:0};this.normalizeLayers();this.syncControls();this.schedule();
+  }
+  resize(){
+    const w=this.frame.clientWidth,h=this.frame.clientHeight;if(!w||!h)return;
+    this.dpr=Math.min(window.devicePixelRatio||1,1.5);
+    this.canvas.width=Math.round(w*this.dpr);this.canvas.height=Math.round(h*this.dpr);
+    this.img=null;this.schedule();
+  }
+  schedule(){if(this.queued)return;this.queued=true;requestAnimationFrame(()=>{this.queued=false;this.render()})}
+  geom(){
+    const W=this.canvas.width,H=this.canvas.height,sc=this.scene,pad=(this.hero?6:18)*this.dpr;
+    if(!sc)return {W,H,s:1,ox:0,oy:0};
+    const s0=Math.max(1e-6,Math.min((W-2*pad)/sc.cols,(H-2*pad)/sc.rows)),s=s0*this.view.k;
+    return {W,H,s,ox:W/2+this.view.x-sc.cols*s/2,oy:H/2+this.view.y-sc.rows*s/2};
+  }
+  zoomAt(factor,mx,my){
+    const sc=this.scene;if(!sc)return;
+    const g=this.geom(),k=clamp(this.view.k*factor,.4,48),ratio=k/this.view.k;
+    const u=(mx-g.ox)/g.s,v=(my-g.oy)/g.s,s=g.s*ratio;
+    this.view.k=k;this.view.x=mx-u*s-g.W/2+sc.cols*s/2;this.view.y=my-v*s-g.H/2+sc.rows*s/2;
+  }
+  bindPointer(){
+    const c=this.canvas;let drag=null;
+    c.addEventListener('wheel',e=>{
+      if(!this.scene)return;e.preventDefault();
+      const r=c.getBoundingClientRect();
+      this.zoomAt(Math.exp(-e.deltaY*.0015),(e.clientX-r.left)*this.dpr,(e.clientY-r.top)*this.dpr);this.schedule();
+    },{passive:false});
+    c.addEventListener('pointerdown',e=>{drag={x:e.clientX,y:e.clientY};c.setPointerCapture(e.pointerId);c.classList.add('panning')});
+    c.addEventListener('pointermove',e=>{
+      if(drag){this.view.x+=(e.clientX-drag.x)*this.dpr;this.view.y+=(e.clientY-drag.y)*this.dpr;drag={x:e.clientX,y:e.clientY};this.schedule()}
+      this.inspect(e);
+    });
+    const end=()=>{drag=null;c.classList.remove('panning')};
+    c.addEventListener('pointerup',end);c.addEventListener('pointercancel',end);
+    c.addEventListener('pointerleave',()=>{this.tipEl.hidden=true;this.cursorEl.hidden=true});
+    c.addEventListener('dblclick',()=>this.action('fit'));
+  }
+  inspect(e){
+    const sc=this.scene;if(!sc){this.tipEl.hidden=true;return}
+    const r=this.canvas.getBoundingClientRect(),g=this.geom();
+    const mx=(e.clientX-r.left)*this.dpr,my=(e.clientY-r.top)*this.dpr,u=(mx-g.ox)/g.s,v=(my-g.oy)/g.s;
+    if(u<0||v<0||u>=sc.cols||v>=sc.rows){this.tipEl.hidden=true;this.cursorEl.hidden=true;return}
+    const col=Math.floor(u),row=Math.floor(v),i=row*sc.cols+col,unit=sc.cell?'m':'cells',k=sc.cell||1;
+    const depth=sc.dw[i],lines=[['X',`${(u*k).toFixed(1)} ${unit}`],['Y',`${(v*k).toFixed(1)} ${unit}`]];
+    if(sc.terrain)lines.push(['Terrain elevation',`${sc.terrain[i].toFixed(3)} m`]);
+    lines.push(['Water depth',depth>0?`${depth.toFixed(3)} m`:'dry']);
+    if(sc.refine){
+      const rc=Math.min(sc.refine.cols-1,Math.floor(u/sc.cols*sc.refine.cols)),rr=Math.min(sc.refine.rows-1,Math.floor(v/sc.rows*sc.refine.rows));
+      lines.push(['Refinement level',String(sc.refine.data[rr*sc.refine.cols+rc])]);
+    }
+    this.tipEl.innerHTML=lines.map(([a,b])=>`<span>${a}</span><b>${b}</b>`).join('');
+    const fr=this.frame.getBoundingClientRect(),x=e.clientX-fr.left,y=e.clientY-fr.top;
+    this.tipEl.hidden=false;
+    const tw=this.tipEl.offsetWidth,th=this.tipEl.offsetHeight;
+    this.tipEl.style.left=`${x+16+tw>fr.width?x-16-tw:x+16}px`;this.tipEl.style.top=`${y+16+th>fr.height?y-16-th:y+16}px`;
+    const s=g.s/this.dpr;
+    Object.assign(this.cursorEl.style,{left:`${(g.ox/this.dpr)+col*s}px`,top:`${(g.oy/this.dpr)+row*s}px`,width:`${s}px`,height:`${s}px`});
+    this.cursorEl.hidden=false;
+  }
+  render(){
+    const W=this.canvas.width,H=this.canvas.height,ctx=this.ctx;
+    ctx.setTransform(1,0,0,1,0,0);
+    if(!this.scene||!W||!H){ctx.fillStyle=rgb(MAP_BG);ctx.fillRect(0,0,W,H);return}
+    this.prepare();this.compose(this.hero?this.reveal:1);
+    if(!this.hero)this.overlays();
+  }
+  prepare(){
+    const sc=this.scene,W=this.canvas.width,H=this.canvas.height,g=this.geom(),L=this.layers,n=W*H,{rows,cols,dw,wm}=sc;
+    const useTerrain=Boolean(sc.terrain&&L.terrain),z=sc.terrain;
+    const Wf=new Float32Array(n),Dn=new Float32Array(n),Zf=useTerrain?new Float32Array(n):null,ins=new Uint8Array(n);
+    const x0=new Int32Array(W),x1=new Int32Array(W),fx=new Float32Array(W),insX=new Uint8Array(W);
+    for(let px=0;px<W;px++){const u=(px+.5-g.ox)/g.s,s=u-.5,i=Math.floor(s);x0[px]=clamp(i,0,cols-1);x1[px]=clamp(i+1,0,cols-1);fx[px]=s-i;insX[px]=u>=0&&u<=cols?1:0}
+    for(let py=0;py<H;py++){
+      const v=(py+.5-g.oy)/g.s;if(!(v>=0&&v<=rows))continue;
+      const s=v-.5,j=Math.floor(s),r0=clamp(j,0,rows-1)*cols,r1=clamp(j+1,0,rows-1)*cols,fy=s-j;
+      for(let px=0;px<W;px++){
+        if(!insX[px])continue;
+        const i=py*W+px,a=r0+x0[px],b=r0+x1[px],c=r1+x0[px],d=r1+x1[px],ux=fx[px];
+        const w00=(1-ux)*(1-fy),w10=ux*(1-fy),w01=(1-ux)*fy,w11=ux*fy;
+        const den=wm[a]*w00+wm[b]*w10+wm[c]*w01+wm[d]*w11;
+        ins[i]=1;Wf[i]=den;Dn[i]=den>1e-6?(dw[a]*w00+dw[b]*w10+dw[c]*w01+dw[d]*w11)/den:0;
+        if(Zf)Zf[i]=z[a]*w00+z[b]*w10+z[c]*w01+z[d]*w11;
+      }
+    }
+    if(!this.land||this.land.length!==n*4){this.land=new Uint8ClampedArray(n*4);this.wat=new Uint8ClampedArray(n*4)}
+    const land=this.land,wat=this.wat,span=sc.zmax-sc.zmin,interval=span/10,level=i=>Math.floor((Zf[i]-sc.zmin)/interval);
+    wat.fill(0);
+    for(let py=0;py<H;py++)for(let px=0;px<W;px++){
+      const i=py*W+px,o=i*4;
+      if(!ins[i]){land[o]=MAP_BG[0];land[o+1]=MAP_BG[1];land[o+2]=MAP_BG[2];land[o+3]=255;continue}
+      const ix1=px<W-1?i+1:i,ix0=px>0?i-1:i,iy1=py<H-1?i+W:i,iy0=py>0?i-W:i;
+      let col;
+      if(!useTerrain)col=PLAIN_LAND;
+      else if(sc.relief){
+        col=rampColor(LAND_STOPS,(Zf[i]-sc.zmin)/span);
+        if(sc.maxGrad>0){
+          const gx=(Zf[ix1]-Zf[ix0])*.5*g.s,gy=(Zf[iy1]-Zf[iy0])*.5*g.s,sh=1+.42*clamp((gx+gy)*.7071/sc.maxGrad,-1,1);
+          col=[col[0]*sh,col[1]*sh,col[2]*sh];
+        }
+        if(L.contours&&interval>0&&(level(i)!==level(ix1)||level(i)!==level(iy1)))col=[col[0]*.78,col[1]*.78,col[2]*.78];
+      }else col=FLAT_LAND;
+      const gxw=(Wf[ix1]-Wf[ix0])*.5,gyw=(Wf[iy1]-Wf[iy0])*.5,gm=Math.max(Math.hypot(gxw,gyw),1e-4);
+      if(L.water&&Wf[i]<.5&&Wf[i]>.02){
+        const out=(.5-Wf[i])/gm;
+        if(out<3){const k=1-.2*(1-out/3);col=[col[0]*k,col[1]*k,col[2]*k]}
+      }
+      land[o]=col[0];land[o+1]=col[1];land[o+2]=col[2];land[o+3]=255;
+      if(L.water&&Wf[i]>=.5){
+        const wc=rampColor(WATER_STOPS,waterTone(Dn[i]/sc.dmax)),e=(Wf[i]-.5)/gm;
+        let a=wc[3]*clamp01(.4+e/2),r=wc[0],gC=wc[1],bC=wc[2];
+        if(e<2.4){const f=(1-e/2.4)*.78;r+=(235-r)*f;gC+=(247-gC)*f;bC+=(251-bC)*f;a+=(.92-a)*f*.7}
+        wat[o]=r;wat[o+1]=gC;wat[o+2]=bC;wat[o+3]=a*255;
+      }
+    }
+  }
+  compose(reveal){
+    const W=this.canvas.width,H=this.canvas.height;
+    if(!this.img||this.img.width!==W||this.img.height!==H)this.img=this.ctx.createImageData(W,H);
+    const out=this.img.data,land=this.land,wat=this.wat,pos=reveal*1.3-.15;
+    for(let py=0;py<H;py++)for(let px=0;px<W;px++){
+      const o=(py*W+px)*4;let a=wat[o+3]/255;
+      if(a>0&&reveal<1)a*=clamp01((pos-px/W)/.18);
+      out[o]=land[o]+(wat[o]-land[o])*a;out[o+1]=land[o+1]+(wat[o+1]-land[o+1])*a;out[o+2]=land[o+2]+(wat[o+2]-land[o+2])*a;out[o+3]=255;
+    }
+    this.ctx.putImageData(this.img,0,0);
+  }
+  overlays(){
+    const sc=this.scene,L=this.layers,ctx=this.ctx,g=this.geom(),dpr=this.dpr,X=u=>g.ox+u*g.s,Y=v=>g.oy+v*g.s;
+    ctx.save();ctx.beginPath();ctx.rect(X(0),Y(0),sc.cols*g.s,sc.rows*g.s);ctx.clip();
+    if(L.urban){
+      ctx.strokeStyle='rgba(236,238,228,.30)';ctx.fillStyle='rgba(30,34,32,.20)';ctx.lineWidth=dpr;
+      const block=Math.max(6,Math.round(Math.min(sc.cols,sc.rows)/8)),gap=Math.max(1,block*.22);
+      for(let r=0;r<sc.rows;r+=block)for(let c=0;c<sc.cols;c+=block){
+        const w=Math.min(block,sc.cols-c)-gap,h=Math.min(block,sc.rows-r)-gap;
+        if(w>0&&h>0){ctx.fillRect(X(c+gap/2),Y(r+gap/2),w*g.s,h*g.s);ctx.strokeRect(X(c+gap/2),Y(r+gap/2),w*g.s,h*g.s)}
+      }
+    }
+    if(L.grid){
+      const step=Math.max(1,Math.ceil(6*dpr/g.s));ctx.strokeStyle='rgba(255,255,255,.17)';ctx.lineWidth=Math.max(1,dpr*.6);ctx.beginPath();
+      for(let c=0;c<=sc.cols;c+=step){ctx.moveTo(X(c),Y(0));ctx.lineTo(X(c),Y(sc.rows))}
+      for(let r=0;r<=sc.rows;r+=step){ctx.moveTo(X(0),Y(r));ctx.lineTo(X(sc.cols),Y(r))}
+      ctx.stroke();
+    }
+    if(L.refine&&sc.refine){
+      const rf=sc.refine,cw=sc.cols/rf.cols,ch=sc.rows/rf.rows,at=(r,c)=>rf.data[r*rf.cols+c];
+      for(let r=0;r<rf.rows;r++)for(let c=0;c<rf.cols;c++){
+        const lv=at(r,c);if(lv<1)continue;
+        ctx.fillStyle=lv>=2?'rgba(255,255,255,.16)':'rgba(190,232,242,.07)';ctx.fillRect(X(c*cw),Y(r*ch),cw*g.s+.5,ch*g.s+.5);
+      }
+      const edge=(level,style,width)=>{
+        ctx.beginPath();
+        for(let r=0;r<rf.rows;r++)for(let c=0;c<rf.cols;c++){
+          const a=at(r,c);
+          if(c+1<rf.cols&&a!==at(r,c+1)&&Math.max(a,at(r,c+1))===level){ctx.moveTo(X((c+1)*cw),Y(r*ch));ctx.lineTo(X((c+1)*cw),Y((r+1)*ch))}
+          if(r+1<rf.rows&&a!==at(r+1,c)&&Math.max(a,at(r+1,c))===level){ctx.moveTo(X(c*cw),Y((r+1)*ch));ctx.lineTo(X((c+1)*cw),Y((r+1)*ch))}
+        }
+        ctx.strokeStyle=style;ctx.lineWidth=width*dpr;ctx.stroke();
+      };
+      for(let level=1;level<=rf.max;level++)edge(level,level>=2?'rgba(255,255,255,.95)':'rgba(196,238,247,.85)',level>=2?1.6:1.1);
+    }
+    ctx.restore();
+    if(L.urban){
+      ctx.font=`${9*dpr}px ui-monospace,Menlo,monospace`;ctx.fillStyle='rgba(240,243,234,.8)';ctx.textAlign='right';
+      ctx.fillText('ILLUSTRATIVE URBAN CONTEXT · NOT SIMULATION DATA',this.canvas.width-14*dpr,this.canvas.height-12*dpr);
+    }
+  }
+  renderLegend(){
+    if(!this.legendEl)return;
+    const sc=this.scene,L=this.layers;
+    if(!sc){this.legendEl.innerHTML='';return}
+    const parts=[];
+    if(L.water){
+      parts.push(sc.wet?`<div class="gis-legend-block"><b>Flood depth (m)</b><i class="bar" style="background:${waterGradientCss()}"></i><div class="ticks"><span>SHALLOW<em>${fmtM(sc.dmin)}</em></span><span>DEEP<em>${fmtM(sc.dmax)}</em></span></div></div>`:`<div class="gis-legend-block"><b>Flood depth (m)</b><div class="ticks"><span>No wet cells in this output</span></div></div>`);
+    }
+    if(this.variant==='full'&&L.terrain){
+      parts.push(sc.relief?`<div class="gis-legend-block"><b>Terrain elevation (m)</b><i class="bar" style="background:${landGradientCss()}"></i><div class="ticks"><span>LOW<em>${fmtM(sc.zmin)}</em></span><span>HIGH<em>${fmtM(sc.zmax)}</em></span></div></div>`:`<div class="gis-legend-block"><b>Terrain</b><div class="ticks"><span>${sc.terrain?`Flat bed · ${fmtM(sc.zmin)} m`:'Elevation not exported for this run'}</span></div></div>`);
+    }
+    if(L.refine&&sc.refine)parts.push(`<div class="gis-legend-block"><b>Refinement</b><div class="ticks keys"><span><u class="l1"></u>LEVEL 1</span><span><u class="l2"></u>LEVEL 2</span></div></div>`);
+    this.legendEl.innerHTML=parts.join('');
+  }
+  startReveal(){
+    if(this.hero&&!this.revealTimer){
+      if(matchMedia('(prefers-reduced-motion: reduce)').matches){this.reveal=1;return}
+      const cycle=10000,t0=performance.now();
+      const tick=now=>{
+        const next=clamp01(((now-t0)%cycle)/3800);
+        this.reveal=next*next*(3-2*next);
+        if(!document.hidden&&this.scene&&this.land&&(this.reveal<1||this.lastReveal!==1))this.compose(this.reveal);
+        this.lastReveal=this.reveal;
+        this.revealTimer=requestAnimationFrame(tick);
+      };
+      this.revealTimer=requestAnimationFrame(tick);
+    }
+  }
+}
+const viewers={};
+function mountViewers(){
+  const make=(key,id,options)=>{const canvas=document.getElementById(id);if(canvas)viewers[key]=new FloodViewer(canvas,options)};
+  make('hero','heroMap',{hero:true});make('overview','overviewMap',{variant:'compact'});make('run','runMap',{variant:'compact'});
+  make('flood','floodMap',{variant:'full'});make('mesh','meshMap',{variant:'full',mode:'refinement'});
+  viewers.hero?.startReveal();
+}
+function setMapEmpty(id,empty){const element=document.getElementById(id);if(element)element.hidden=!empty}
+async function fetchGrid(url){const response=await fetch(url,{cache:'no-store'});if(!response.ok)throw new Error(response.status===404?'No generated output is available.':`Could not load ${url} (${response.status}).`);return csvGrid(await response.text())}
+async function fetchOptionalGrid(url){try{return await fetchGrid(url)}catch(error){return null}}
+async function cellSizeFor(summary){
+  const explicit=numeric(summary?.cell_size_m);
+  if(explicit&&explicit>0)return explicit;
+  if(summary?.adaptive)return null;
+  try{
+    const response=await fetch('/stats.csv',{cache:'no-store'});if(!response.ok)return null;
+    const [header,row]=(await response.text()).trim().split(/\r?\n/).map(line=>line.split(','));
+    const wet=numeric(row?.[header.indexOf('wet_cells')]),area=numeric(row?.[header.indexOf('flooded_area_m2')]);
+    return wet>0&&area>0?Math.sqrt(area/wet):null;
+  }catch(error){return null}
+}
+function setScene(scene){for(const viewer of Object.values(viewers))viewer.setScene(scene)}
+async function refreshOutput(summary=activeRunSummary){
+  const adaptive=summary?Boolean(summary.adaptive):null;
+  let depth;
+  try{depth=await fetchGrid('/depth.csv')}catch(error){
+    lastScene=null;setScene(null);
+    for(const id of ['overviewEmpty','runEmpty','floodMapEmpty','meshEmpty'])setMapEmpty(id,true);
+    text('heroMapStatus','NO GENERATED DEPTH OUTPUT');text('heroMapCaption','Run a simulation to flood the terrain');
+    text('overviewMapMeta','OUTPUT NOT AVAILABLE');text('runMapMeta','NO GENERATED FIELD');text('floodMapMeta','NO GENERATED FIELD');
+    text('mapMaxDepth','N/A');text('mapMeanDepth','N/A');text('mapWetCells','N/A');text('mapTime','N/A');
+    text('meshStatus','NO ADAPTIVE OUTPUT');text('meshMapMeta','NO GENERATED REFINEMENT MAP');
+    console.info(error.message);return;
+  }
+  const [terrain,refinement,cell]=await Promise.all([
+    adaptive===true?null:fetchOptionalGrid('/terrain.csv'),
+    adaptive===false?null:fetchOptionalGrid('/refinement.csv'),
+    cellSizeFor(summary)]);
+  const scene=buildScene(depth,terrain,refinement,cell);lastScene=scene;setScene(scene);
+  const dims=`${scene.rows} × ${scene.cols} CELLS`,extent=scene.cell?` · ${(scene.cols*scene.cell).toFixed(0)} × ${(scene.rows*scene.cell).toFixed(0)} M`:'';
+  for(const id of ['overviewEmpty','runEmpty','floodMapEmpty'])setMapEmpty(id,false);
+  text('heroMapStatus',`SIMULATION OUTPUT · ${scene.rows} × ${scene.cols}`);text('heroMapCaption','Final simulated water field · reveal animation only');
+  for(const id of ['overviewMapMeta','runMapMeta','floodMapMeta'])text(id,`${dims}${extent} · MAX DEPTH ${scene.dmax.toFixed(4)} M`);
+  text('mapMaxDepth',`${scene.dmax.toFixed(4)} m`);text('mapMeanDepth',`${scene.mean.toFixed(4)} m`);
+  text('mapWetCells',countText(scene.wet));text('mapTime',summary?.stats?.time_s===undefined?'N/A':`${Number(summary.stats.time_s).toFixed(3)} s`);
+  if(scene.refine){
+    setMapEmpty('meshEmpty',false);text('meshStatus','MAP AVAILABLE');
+    text('meshMapMeta',`${scene.refine.rows} × ${scene.refine.cols} REFINEMENT CELLS · MAX LEVEL ${scene.refine.max}`);
+  }else{setMapEmpty('meshEmpty',true);text('meshStatus','NO ADAPTIVE OUTPUT');text('meshMapMeta','NO GENERATED REFINEMENT MAP')}
+  if(summary)renderRunSummary(summary);
+}
+function renderRunSummary(summary){
+  activeRunSummary=summary;const s=summary.stats||{},isAdaptive=Boolean(summary.adaptive);
+  const backend=summary.backend||'—',worker=backend==='openmp'?`${summary.threads} threads`:backend==='mpi'?`${summary.processes} ranks`:'serial';
+  const gridCells=numeric(summary.rows)!==null&&numeric(summary.cols)!==null?Number(summary.rows)*Number(summary.cols):null;
+  const activeCells=numeric(s.active_leaf_cells)??gridCells;
+  text('overview-scenario',scenarioNames[summary.scenario]||'Latest run');
+  text('overview-backend',`${backend.toUpperCase()} · ${worker}`);
+  text('overview-grid',summary.rows&&summary.cols?`${summary.rows} × ${summary.cols}`:'See generated field');
+  text('overview-adaptive',isAdaptive?'Adaptive refinement enabled':'Uniform grid');
+  text('overview-runtime',displayNumber(summary.backend_runtime,4,' s'));
+  text('overview-depth',displayNumber(s.max_depth_m,4,' m'));
+  text('overview-active',countText(activeCells));
+  text('overview-wet',countText(s.wet_cells));text('overview-time',displayNumber(s.time_s,3,' s'));
+  text('overview-residual',numeric(s.mass_residual_m3)===null?'N/A':Number(s.mass_residual_m3).toExponential(2)+' m³');
+  text('overview-validation',summary.validation_pass?'PASS':'FAIL');
+  const state=document.querySelector('#overviewState');state.textContent=summary.validation_pass?'RUN VALIDATED':'CHECK RUN';state.classList.toggle('fail',!summary.validation_pass);
+  text('runBackend',`${backend.toUpperCase()} · ${worker}`);
+  text('runRuntime',displayNumber(summary.backend_runtime,4,' s'));text('runSpeedup',displayNumber(summary.speedup,3,'×'));
+  text('runMaxDepth',displayNumber(s.max_depth_m,4,' m'));text('runActiveCells',countText(activeCells));
+  text('runResidual',numeric(s.mass_residual_m3)===null?'N/A':Number(s.mass_residual_m3).toExponential(2));
+  const message=document.querySelector('#runMessage');message.textContent=summary.validation_pass?'Simulation completed; serial-reference and conservation checks passed.':'Simulation completed with one or more validation checks failing.';message.className=`status-message ${summary.validation_pass?'success':'error'}`;
+  text('runMapTag','LATEST GENERATED FIELD');
+  text('meshBaseCells',countText(gridCells));
+  text('meshLeafCells',isAdaptive?countText(s.active_leaf_cells):'N/A');text('meshRatio',displayNumber(s.active_cell_ratio,3,'×'));
+  text('meshLevel',isAdaptive?String(summary.max_level??'N/A'):'N/A');
+  text('meshRefined',countText(s.refined_patches));text('meshCoarsened',countText(s.coarsened_patches));
+  text('meshRegrids','N/A');
+}
+function enterDashboard(page='overview'){
+  landing.hidden=true;dashboard.hidden=false;showPage(page);window.scrollTo({top:0,behavior:'instant'});
+  if(!activeRunSummary)loadLatest();
+}
+function showLanding(){dashboard.hidden=true;landing.hidden=false;window.scrollTo({top:0,behavior:'smooth'})}
+function showPage(name){
+  document.querySelectorAll('.page').forEach(page=>page.classList.toggle('active',page.id===`page-${name}`));
+  document.querySelectorAll('.nav-btn').forEach(button=>button.classList.toggle('active',button.dataset.page===name));
+  const page=document.querySelector(`#page-${name}`);text('breadcrumb',page?.dataset.title||name.toUpperCase());window.scrollTo({top:0,behavior:'smooth'});
+  if(name==='performance')renderPerformance();if(name==='load-balancing')renderLoadBalancing();if(name==='validation')loadValidation();
+}
+document.querySelectorAll('[data-enter]').forEach(button=>button.addEventListener('click',()=>enterDashboard()));
+document.querySelectorAll('[data-home]').forEach(button=>button.addEventListener('click',showLanding));
+document.querySelectorAll('[data-page]').forEach(button=>button.addEventListener('click',()=>showPage(button.dataset.page)));
+document.querySelectorAll('[data-go]').forEach(button=>button.addEventListener('click',()=>showPage(button.dataset.go)));
+
+async function loadBenchmarks(scenario){
+  if(benchmarkCache.has(scenario))return benchmarkCache.get(scenario);
+  const response=await fetch(`/api/benchmarks?scenario=${encodeURIComponent(scenario)}`);
+  const result=await response.json();if(!response.ok)throw new Error(result.error||'Could not load measured results.');
+  benchmarkCache.set(scenario,result.rows||[]);return result.rows||[];
+}
+function findRow(rows,condition){return rows.find(condition)||null}
+function setMetricPair(prefix,row,first,second){
+  text(`${prefix}-imbalance`,row&&numeric(row[first])!==null&&numeric(row[second])!==null?`${Number(row[first]).toFixed(3)} → ${Number(row[second]).toFixed(3)}`:'N/A');
+}
+async function loadLandingMetrics(){
+  try{
+    const rows=await loadBenchmarks('dam-break');
+    const mpi=findRow(rows,r=>r.family==='uniform'&&r.rows==='1024'&&r.backend==='mpi'&&r.ranks==='4');
+    const omp=findRow(rows,r=>r.family==='uniform'&&r.rows==='1024'&&r.backend==='openmp'&&r.threads==='4');
+    const speedMpi=mpi?`${Number(mpi.serial_speedup).toFixed(3)}×`:'N/A',speedOmp=omp?`${Number(omp.serial_speedup).toFixed(3)}×`:'N/A';
+    text('landing-mpi',speedMpi);text('landing-openmp',speedOmp);text('result-mpi',speedMpi);text('result-openmp',speedOmp);
+    renderSpeedupBars(mpi,omp);
+    const adaptive=await loadBenchmarks('localized-refinement');
+    const dynamic=findRow(adaptive,r=>r.family==='adaptive'&&r.backend==='mpi'&&r.dynamic_load_balancing==='true'&&r.ranks==='4'&&numeric(r.migrated_cells)>0&&numeric(r.pre_rebalance_imbalance)!==null&&numeric(r.post_rebalance_imbalance)!==null);
+    const migrated=dynamic;
+    setMetricPair('result',dynamic,'pre_rebalance_imbalance','post_rebalance_imbalance');setMetricPair('landing',dynamic,'pre_rebalance_imbalance','post_rebalance_imbalance');
+    const cellText=migrated?countText(migrated.migrated_cells):'N/A';text('landing-migrated',cellText);text('result-cells',cellText);
+    const adaptiveDam=await loadBenchmarks('dam-break');
+    const adaptiveRow=findRow(adaptiveDam,r=>r.family==='adaptive'&&r.backend==='serial');
+    const uniformMatch=adaptiveRow?findRow(adaptiveDam,r=>r.family==='uniform'&&r.rows===adaptiveRow.rows&&r.cols===adaptiveRow.cols):null;
+    text('overviewBenchCells',countText(adaptiveRow?.active_leaf_cells));text('overviewBenchRatio',displayNumber(adaptiveRow?.active_cell_ratio,3,'×'));
+    text('overviewBenchLevel',adaptiveRow?.max_level||'N/A');text('overviewBenchResidual',adaptiveRow&&numeric(adaptiveRow.mass_balance_residual)!==null?Number(adaptiveRow.mass_balance_residual).toExponential(2):'N/A');
+    text('meshUniformCells',countText(uniformMatch?.active_leaf_cells));text('meshBenchCells',countText(uniformMatch?adaptiveRow?.active_leaf_cells:null));
+  }catch(error){for(const id of ['landing-mpi','landing-openmp','landing-imbalance','landing-migrated','result-mpi','result-openmp','result-imbalance','result-cells'])text(id,'N/A');text('performanceSource',error.message)}
+}
+function renderSpeedupBars(mpi,omp){
+  const target=document.querySelector('#overviewBenchmarkBars');if(!target)return;
+  const rows=[['OpenMP · 4 threads',omp],['MPI · 4 ranks',mpi]].filter(item=>item[1]);
+  if(!rows.length){target.innerHTML='<div class="no-data">No matching measured benchmark rows.</div>';return}
+  target.innerHTML=rows.map(([label,row])=>`<div class="chart-row"><span class="chart-name">${label}</span><div class="bar-track" title="Measured speedup ${Number(row.serial_speedup).toFixed(3)}×"><div class="bar-fill" style="width:${Math.min(100,Number(row.serial_speedup)/2*100)}%"></div></div><span class="bar-value">${Number(row.serial_speedup).toFixed(3)}×</span></div>`).join('');
+}
+async function loadLatest(){
+  try{const response=await fetch('/status',{cache:'no-store'}),result=await response.json();if(result.running){text('runMessage','A simulation is running in this local server.');return}if(result.summary){renderRunSummary(result.summary);await refreshOutput(result.summary)}else await refreshOutput(null)}
+  catch(error){await refreshOutput(null);console.info(error.message)}
+}
+
+const runForm=document.querySelector('#runForm'),backendSelect=document.querySelector('#backend'),adaptiveToggle=document.querySelector('#adaptive');
+function updateFormControls(){
+  const isOpenMP=backendSelect.value==='openmp',isMPI=backendSelect.value==='mpi',isAdaptive=adaptiveToggle.checked;
+  document.querySelector('#threadsField').hidden=!isOpenMP;document.querySelector('#ranksField').hidden=!isMPI;
+  document.querySelectorAll('.adaptive-field').forEach(field=>field.hidden=!isAdaptive);
+  document.querySelectorAll('.mpi-adaptive').forEach(field=>field.hidden=!(isMPI&&isAdaptive));
+  document.querySelector('#dynamicBalance').disabled=!(isMPI&&isAdaptive);
+}
+backendSelect.addEventListener('change',updateFormControls);adaptiveToggle.addEventListener('change',updateFormControls);updateFormControls();
+runForm.addEventListener('submit',async event=>{
+  event.preventDefault();const button=document.querySelector('#runButton'),message=document.querySelector('#runMessage');
+  button.disabled=true;message.className='status-message running';message.textContent='Starting the solver and serial reference…';text('runMapTag','RUNNING');setMapEmpty('runEmpty',true);
+  for(const id of ['runBackend','runRuntime','runSpeedup','runMaxDepth','runActiveCells','runResidual'])text(id,'—');
+  try{
+    const response=await fetch('/run',{method:'POST',body:new URLSearchParams(new FormData(runForm))});
+    if(!response.ok){const result=await response.json();throw new Error(result.error||`Simulation request failed (${response.status}).`)}
+    pollRun();
+  }catch(error){
+    button.disabled=false;message.className='status-message error';message.textContent=error.message;text('runMapTag','PREVIOUS OUTPUT');
+    if(activeRunSummary)await refreshOutput(null);
+  }
+});
+async function pollRun(){
+  try{
+    const response=await fetch('/status',{cache:'no-store'}),result=await response.json();
+    if(result.running){text('runMessage','Running simulation and serial reference…');setTimeout(pollRun,700);return}
+    const button=document.querySelector('#runButton');button.disabled=false;
+    if(result.error){const message=document.querySelector('#runMessage');message.className='status-message error';message.textContent=result.error;text('runMapTag','RUN FAILED');return}
+    if(!result.summary){const message=document.querySelector('#runMessage');message.className='status-message error';message.textContent='The solver finished without a result summary.';return}
+    renderRunSummary(result.summary);await refreshOutput(result.summary);await loadValidation();
+  }catch(error){const message=document.querySelector('#runMessage');message.className='status-message error';message.textContent=error.message;document.querySelector('#runButton').disabled=false}
+}
+
+
+
+const perfScenario=document.querySelector('#perfScenario'),perfBackend=document.querySelector('#perfBackend'),perfGrid=document.querySelector('#perfGrid');
+for(const control of [perfScenario,perfBackend,perfGrid])control.addEventListener('change',renderPerformance);
+async function renderPerformance(){
+  const chart=document.querySelector('#performanceChart');if(!chart)return;
+  try{
+    const rows=await loadBenchmarks(perfScenario.value),backend=perfBackend.value,grid=perfGrid.value;
+    const filtered=rows.filter(row=>(backend==='all'||row.backend===backend)&&(grid==='all'||String(row.rows)===grid));
+    text('performanceSource','benchmarks/adaptive/final-summary.csv');
+    const maxTime=Math.max(0,...filtered.map(row=>numeric(row.median_runtime_seconds)||0));
+    chart.innerHTML=filtered.length?filtered.map(row=>{
+      const name=`${row.family} · ${row.backend} · ${row.threads&&row.backend==='openmp'?row.threads+'T':row.ranks&&row.backend==='mpi'?row.ranks+'R':'1 worker'}`;
+      const kind=row.dynamic_load_balancing==='true'?'dynamic':row.family==='adaptive'?'adaptive':'uniform';
+      return `<div class="chart-row" title="${name}; ${row.rows}×${row.cols}; measured median ${row.median_runtime_seconds}s"><span class="chart-name">${name}</span><div class="bar-track"><div class="bar-fill ${kind}" style="width:${maxTime?Math.max(1,Number(row.median_runtime_seconds)/maxTime*100):0}%"></div></div><span class="bar-value">${numeric(row.median_runtime_seconds)===null?'N/A':Number(row.median_runtime_seconds).toFixed(5)+' s'}</span></div>`;
+    }).join(''):'';
+    const tbody=document.querySelector('#performanceRows');tbody.innerHTML=filtered.map(row=>`<tr><td>${row.family}</td><td>${scenarioNames[row.scenario]||row.scenario}</td><td class="mono">${row.rows} × ${row.cols}</td><td>${row.backend}${row.dynamic_load_balancing==='true'?' · dynamic':''}</td><td class="mono">${row.backend==='mpi'?row.ranks+' ranks':row.backend==='openmp'?row.threads+' threads':'1'}</td><td class="mono">${displayNumber(row.median_runtime_seconds,5,' s')}</td><td class="mono">${displayNumber(row.serial_speedup,3,'×')}</td><td class="mono">${displayNumber(row.parallel_efficiency,3,'')}</td><td class="mono">${countText(row.active_leaf_cells)}</td></tr>`).join('');
+    document.querySelector('#performanceEmpty').hidden=filtered.length>0;
+  }catch(error){chart.innerHTML=`<div class="no-data">${error.message}</div>`;document.querySelector('#performanceEmpty').hidden=true}
+}
+
+const balanceScenario=document.querySelector('#balanceScenario'),balanceGrid=document.querySelector('#balanceGrid');
+for(const control of [balanceScenario,balanceGrid])control.addEventListener('change',renderLoadBalancing);
+async function renderLoadBalancing(){
+  try{
+    const rows=await loadBenchmarks(balanceScenario.value),filtered=rows.filter(row=>row.family==='adaptive'&&row.backend==='mpi'&&row.dynamic_load_balancing==='true'&&(balanceGrid.value==='all'||String(row.rows)===balanceGrid.value)&&numeric(row.pre_rebalance_imbalance)!==null);
+    document.querySelector('#balanceEmpty').hidden=filtered.length>0;
+    const tbody=document.querySelector('#balanceRows');
+    tbody.innerHTML=filtered.map(row=>`<tr><td class="mono">${row.rows} × ${row.cols}</td><td class="mono">${row.ranks}</td><td class="mono">${displayNumber(row.pre_rebalance_imbalance,3,'×')}</td><td class="mono">${displayNumber(row.post_rebalance_imbalance,3,'×')}</td><td class="mono">${countText(row.migration_count)}</td><td class="mono">${countText(row.migrated_patches)}</td><td class="mono">${countText(row.migrated_cells)}</td><td class="mono">${displayNumber(row.migration_time_seconds,5,' s')}</td></tr>`).join('');
+    const selected=[...filtered].sort((a,b)=>(numeric(b.migrated_cells)||0)-(numeric(a.migrated_cells)||0))[0]||null;
+    text('balBefore',selected?displayNumber(selected.pre_rebalance_imbalance,3,'×'):'N/A');text('balAfter',selected?displayNumber(selected.post_rebalance_imbalance,3,'×'):'N/A');
+    text('balPatches',selected?countText(selected.migrated_patches):'N/A');text('balCells',selected?countText(selected.migrated_cells):'N/A');
+    text('balTime',selected?displayNumber(selected.migration_time_seconds,5,' s'):'N/A');text('balCount',selected?countText(selected.migration_count):'N/A');
+    text('balOverall',selected?displayNumber(selected.workload_imbalance,3,'×'):'N/A');
+    text('balConfig',selected?`${selected.rows}² · ${selected.ranks} ranks`:'N/A');
+    const before=document.querySelector('#beforeBars'),after=document.querySelector('#afterBars');
+    const barMarkup=(ratio,afterBar,index)=>`<div class="rank-bar ${afterBar?'after':''}" title="Recorded imbalance ratio ${Number(ratio).toFixed(3)}×" style="height:${Math.min(100,Math.max(3,Number(ratio)/Math.max(Number(ratio),2)*100))}%"><span>${afterBar?'post':'pre'}</span></div>`;
+    before.innerHTML=selected?barMarkup(selected.pre_rebalance_imbalance,false,0):'';after.innerHTML=selected?barMarkup(selected.post_rebalance_imbalance,true,0):'';
+  }catch(error){document.querySelector('#balanceRows').innerHTML='';document.querySelector('#balanceEmpty').hidden=false;document.querySelector('#balanceEmpty').textContent=error.message}
+}
+
+async function loadValidation(){
+  try{
+    const response=await fetch('/api/validation');const data=await response.json();if(!response.ok)throw new Error(data.error||'Validation data unavailable.');
+    text('validationMass',data.maxMassBalanceResidualM3===null?'N/A':Number(data.maxMassBalanceResidualM3).toExponential(2)+' m³');
+    text('validationInterface',data.maxInterfaceResidual===null?'N/A':Number(data.maxInterfaceResidual).toExponential(2));
+    text('validationRows',countText(data.measuredRows));
+    const tolerance=(value,unit)=>numeric(value)===null?'N/A':`${Number(value).toExponential(1)} ${unit}`;
+    const tolerances=`Recorded comparison tolerances · depth ${tolerance(data.depthToleranceM,'m')} · momentum ${tolerance(data.momentumToleranceM2S,'m²/s')} · conservation ${tolerance(data.conservationToleranceM3,'m³')}`;
+    text('validationTolerances',tolerances);
+    document.querySelectorAll('.validation-check').forEach(item=>{
+      item.textContent=data.suitePassed?'✓':'·';
+      item.style.color=data.suitePassed?'var(--mint)':'var(--dim)';
+    });
+    const pill=document.querySelector('#validationStatus');
+    if(data.suitePassed){pill.textContent='ALL VALIDATION CHECKS PASSED';pill.classList.remove('fail');text('landing-validation','ALL CHECKS PASS')}
+    else{pill.textContent=data.testLogAvailable?`CTEST ${data.passedTests}/${data.totalTests} PASS`:'NO CTEST RESULT';pill.classList.add('fail');text('landing-validation',data.testLogAvailable?`${data.passedTests}/${data.totalTests} TESTS PASS`:'NOT RECORDED')}
+    text('landing-residual',data.maxMassBalanceResidualM3===null?'Measured conservation residual · N/A':`Maximum measured mass residual · ${Number(data.maxMassBalanceResidualM3).toExponential(2)} m³`);
+    text('landing-interface',data.maxInterfaceResidual===null?'N/A':Number(data.maxInterfaceResidual).toExponential(2));
+    const failures=data.failedTests?.length?` · failed: ${data.failedTests.join(', ')}`:'';
+    text('validationRecord',`CTest record from build-mpi/Testing/Temporary/LastTest.log${data.testLogModified?` · modified ${new Date(data.testLogModified*1000).toLocaleString()}`:''}${failures}. Benchmark residuals from ${data.source}.`);
+  }catch(error){text('validationStatus','VALIDATION DATA UNAVAILABLE');text('validationRecord',error.message)}
+}
+async function loadCapabilities(){
+  try{
+    const response=await fetch('/api/capabilities');const data=await response.json();
+    const available=Object.entries(data.backends||{}).filter(([,value])=>value.status==='AVAILABLE').map(([name])=>name.toUpperCase());
+    text('side-backends',available.length?available.join(' / '):'NO BACKEND AVAILABLE');
+  }catch(error){text('side-backends','CAPABILITY CHECK FAILED')}
+}
+
+mountViewers();loadLandingMetrics();loadValidation();loadCapabilities();loadLatest();
+</script>
+</body>
+</html>

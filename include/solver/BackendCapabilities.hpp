@@ -15,7 +15,7 @@ struct BackendCapability {
     std::string_view detail;
 };
 
-inline std::array<BackendCapability, 3> backendCapabilities() {
+inline std::array<BackendCapability, 5> backendCapabilities() {
 #ifdef FLOOD_HAS_OPENMP
     constexpr BackendCapability openmp{"openmp", "AVAILABLE", true, true, true,
                                        "OpenMP solver is compiled"};
@@ -50,8 +50,22 @@ inline std::array<BackendCapability, 3> backendCapabilities() {
                                      "MPI solver source is not present and MPI compiler/runtime unavailable"};
 #endif
 #endif
+#ifdef FLOOD_HAS_CUDA
+    constexpr BackendCapability cuda{"cuda", "AVAILABLE", true, true, true,
+                                      "CUDA solver is compiled"};
+#else
+    constexpr BackendCapability cuda{"cuda", "UNAVAILABLE", true, false, false,
+                                      "CUDA solver source exists but no CUDA toolchain/NVIDIA GPU was found"};
+#endif
+#ifdef FLOOD_HAS_OPENACC
+    constexpr BackendCapability openacc{"openacc", "AVAILABLE", true, true, true,
+                                         "OpenACC solver is compiled with accelerator directives"};
+#else
+    constexpr BackendCapability openacc{"openacc", "UNAVAILABLE", true, false, false,
+                                         "OpenACC solver source exists but the compiler has no OpenACC support"};
+#endif
     return {{{"serial", "AVAILABLE", true, true, true, "serial reference solver is compiled"},
-             openmp, mpi}};
+             openmp, mpi, cuda, openacc}};
 }
 
 inline std::string backendCapabilitiesJson() {

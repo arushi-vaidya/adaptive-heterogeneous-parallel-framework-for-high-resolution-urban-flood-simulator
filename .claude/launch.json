@@ -1,0 +1,6 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {"name": "flood-ui", "runtimeExecutable": "python3", "runtimeArgs": ["scripts/ui.py"], "port": 8000}
+  ]
+}

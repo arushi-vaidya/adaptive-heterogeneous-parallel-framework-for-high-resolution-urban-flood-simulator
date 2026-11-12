@@ -3,8 +3,10 @@
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import csv
 import json
+import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -17,14 +19,19 @@ SOLVER_BINARY = ROOT / "build-mpi" / "flood_sim"
 ADAPTIVE_BINARY = ROOT / "build-mpi" / "flood_adaptive_benchmark"
 PAGE_PATH = Path(__file__).with_name("ui.html")
 SUMMARY_PATH = ROOT / "benchmarks" / "adaptive" / "final-summary.csv"
-SCENARIOS = {"dam-break", "rain-drain", "localized-refinement"}
+SCENARIOS = {"urban-district", "dam-breach", "catchment", "dam-break", "rain-drain",
+             "localized-refinement"}
+RAINY_SCENARIOS = {"urban-district", "catchment"}  # rain wets every cell: AMR would refine everything
+BACKENDS = ("serial", "openmp", "mpi", "cuda", "openacc")
+ADAPTIVE_BACKENDS = ("serial", "openmp", "mpi")
+SWEEP_SCENARIOS = {"urban-district", "dam-break", "rain-drain"}
 
 
 def detect_capabilities():
     unavailable = {
         name: {"status": "UNAVAILABLE", "implemented": False,
                "detail": "solver executable is not built"}
-        for name in ("serial", "openmp", "mpi")
+        for name in BACKENDS
     }
     if not SOLVER_BINARY.is_file():
         return unavailable
@@ -37,7 +44,7 @@ def detect_capabilities():
         return {
             name: {"status": "UNAVAILABLE", "implemented": False,
                    "detail": f"capability detection failed: {error}"}
-            for name in ("serial", "openmp", "mpi")
+            for name in BACKENDS
         }
     return capabilities
 
@@ -64,9 +71,23 @@ def detect_mpi_launcher():
     return launcher, numproc_flag, preflags, postflags
 
 
+SHOWCASE_DIR = ROOT / "output" / "ui-showcase-v2"
+
+
+def ensure_showcase():
+    """Pre-compute an urban-district run for the landing-page visuals."""
+    if (SHOWCASE_DIR / "depth.csv").is_file() or not SOLVER_BINARY.is_file():
+        return
+    subprocess.run([str(SOLVER_BINARY), "--scenario", "urban-district", "--rows", "160",
+                    "--cols", "160", "--duration", "120", "--frames", "40",
+                    "--output", str(SHOWCASE_DIR)],
+                   capture_output=True, text=True, check=False)
+
+
 CAPABILITIES = detect_capabilities()
 MPI_LAUNCHER, MPI_NUMPROC_FLAG, MPI_PREFLAGS, MPI_POSTFLAGS = detect_mpi_launcher()
 PROCESS = None
+SWEEP_PROCESS = None
 LOCK = threading.Lock()
 LAST_REQUEST_STATE = "NOT RUN"
 LAST_REQUEST_ERROR = ""
@@ -95,6 +116,13 @@ def benchmark_rows(scenario):
     ]
 
 
+def read_json(path):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
 def last_summary():
     summary_path = RUN_DIR / "summary.json"
     if not summary_path.is_file():
@@ -113,8 +141,6 @@ def output_file(filename):
             adaptive = bool(summary and summary.get("adaptive"))
             # Adaptive runs do not export these maps; any file present is left over from an earlier run.
             if filename == "refinement.csv" and not adaptive:
-                return None
-            if filename == "terrain.csv" and adaptive:
                 return None
         return current
     if filename in ("depth.csv", "terrain.csv", "stats.csv"):
@@ -183,6 +209,7 @@ def status_payload():
         result = {"running": running,
                   "state": "RUNNING" if running else LAST_REQUEST_STATE}
         if running:
+            result["progress"] = read_json(RUN_DIR / "progress.json")
             return result
         if LAST_REQUEST_STATE == "UNAVAILABLE":
             result["error"] = LAST_REQUEST_ERROR
@@ -233,6 +260,40 @@ def backend_options():
     return "".join(options)
 
 
+# User-adjustable scenario and physics parameters: form field -> (flag, min, max, scenarios).
+PARAMETERS = {
+    "rain_intensity": ("--rain-intensity", 0.0, 500.0, None),
+    "rain_duration": ("--rain-duration", 0.0, 3600.0, None),
+    "manning": ("--manning", 0.0, 0.2, None),
+    "infiltration": ("--infiltration-mm-h", 0.0, 200.0, None),
+    "surge_height": ("--surge-height", 0.0, 8.0, {"urban-district"}),
+    "reservoir_depth": ("--reservoir-depth", 0.05, 10.0, {"dam-break", "dam-breach"}),
+    "breach_width": ("--breach-width", 0.05, 1.0, {"dam-breach"}),
+    "pond_depth": ("--pond-depth", 0.01, 5.0, {"localized-refinement"}),
+}
+
+
+def scenario_arguments(form, scenario):
+    """Validate optional parameters; blank fields keep the scenario defaults."""
+    arguments = []
+    for field, (flag, low, high, scenarios) in PARAMETERS.items():
+        raw = form.get(field, [""])[0].strip()
+        if not raw or (scenarios and scenario not in scenarios):
+            continue
+        value = float(raw)
+        if not low <= value <= high:
+            raise ValueError(f"{field.replace('_', ' ').capitalize()} must be between {low:g} and {high:g}.")
+        if field == "rain_duration" and not form.get("rain_intensity", [""])[0].strip():
+            continue
+        arguments.extend((flag, repr(value)))
+    boundary = form.get("boundary", [""])[0]
+    if boundary in ("closed", "outflow"):
+        arguments.extend(("--boundary", boundary))
+    elif boundary:
+        raise ValueError("Boundary must be closed or outflow.")
+    return arguments
+
+
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
@@ -248,6 +309,14 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+        elif parsed.path == "/ui.js":
+            body = PAGE_PATH.with_name("ui.js").read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/javascript; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
         elif parsed.path == "/status":
             json_response(self, status_payload())
         elif parsed.path == "/api/capabilities":
@@ -255,6 +324,7 @@ class Handler(BaseHTTPRequestHandler):
                 "backends": CAPABILITIES,
                 "adaptiveBinaryAvailable": ADAPTIVE_BINARY.is_file(),
                 "mpiLauncherAvailable": bool(MPI_LAUNCHER),
+            "cpuCount": os.cpu_count() or 1,
             })
         elif parsed.path == "/api/benchmarks":
             query = urllib.parse.parse_qs(parsed.query)
@@ -275,6 +345,48 @@ class Handler(BaseHTTPRequestHandler):
                 json_response(self, validation_summary())
             except OSError as error:
                 json_response(self, {"error": f"Could not read validation data: {error}"}, 500)
+        elif parsed.path == "/reference-depth.csv":
+            source = RUN_DIR / "reference-depth.csv"
+            # run_ui_comparison.py deletes this file when a new run starts.
+            if not source.is_file():
+                self.send_error(404, "No reference output is available.")
+                return
+            body = source.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/csv; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        elif parsed.path in ("/frames.bin", "/frames.json", "/landuse.csv") or (
+                parsed.path.startswith("/showcase/") and parsed.path.rsplit("/", 1)[1] in (
+                    "depth.csv", "terrain.csv", "hu.csv", "hv.csv", "landuse.csv",
+                    "frames.bin", "frames.json")):
+            name = parsed.path.rsplit("/", 1)[1]
+            if parsed.path.startswith("/showcase/"):
+                source = SHOWCASE_DIR / name
+            else:
+                summary = last_summary()
+                source = RUN_DIR / "current" / name
+                # adaptive runs export land use but record no time-lapse frames
+                if summary and summary.get("adaptive") and name != "landuse.csv":
+                    source = None
+            if source is None or not source.is_file():
+                self.send_error(404, "Output is not available.")
+                return
+            body = source.read_bytes()
+            self.send_response(200)
+            types = {".csv": "text/csv; charset=utf-8", ".json": "application/json",
+                     ".bin": "application/octet-stream"}
+            self.send_header("Content-Type", types[Path(name).suffix])
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        elif parsed.path == "/api/sweep":
+            with LOCK:
+                running = SWEEP_PROCESS is not None and SWEEP_PROCESS.poll() is None
+            data = read_json(RUN_DIR / "sweep.json") or {"points": [], "complete": False}
+            data["running"] = running
+            json_response(self, data)
         elif parsed.path in ("/depth.csv", "/refinement.csv", "/terrain.csv", "/stats.csv"):
             filename = parsed.path.lstrip("/")
             source = output_file(filename)
@@ -290,8 +402,47 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self.send_error(404)
 
+    def start_sweep(self):
+        global SWEEP_PROCESS
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            form = urllib.parse.parse_qs(self.rfile.read(length).decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            json_response(self, {"error": "Could not parse sweep settings."}, 400)
+            return
+        scenario = form.get("scenario", ["urban-district"])[0]
+        if scenario not in SWEEP_SCENARIOS:
+            json_response(self, {"error": "Unknown sweep scenario."}, 400)
+            return
+        backends = [name for name in ("serial", "openmp", "mpi", "cuda", "openacc")
+                    if CAPABILITIES.get(name, {}).get("status") == "AVAILABLE" and
+                    (name != "mpi" or MPI_LAUNCHER)]
+        command = [
+            sys.executable, str(ROOT / "scripts" / "run_ui_sweep.py"),
+            "--binary", str(SOLVER_BINARY), "--scenario", scenario,
+            "--backends", ",".join(backends), "--mpi-exec", MPI_LAUNCHER,
+            f"--mpi-numproc-flag={MPI_NUMPROC_FLAG}",
+            "--mpi-preflags", MPI_PREFLAGS, "--mpi-postflags", MPI_POSTFLAGS,
+            "--output", str(RUN_DIR),
+        ]
+        with LOCK:
+            if SWEEP_PROCESS is not None and SWEEP_PROCESS.poll() is None:
+                json_response(self, {"error": "A scaling sweep is already running."}, 409)
+                return
+            if PROCESS is not None and PROCESS.poll() is None:
+                json_response(self, {"error": "Wait for the current simulation to finish."}, 409)
+                return
+            RUN_DIR.mkdir(parents=True, exist_ok=True)
+            log = (RUN_DIR / "sweep.log").open("w", encoding="utf-8")
+            SWEEP_PROCESS = subprocess.Popen(command, cwd=ROOT, stdout=log,
+                                             stderr=subprocess.STDOUT)
+        json_response(self, {"state": "RUNNING", "backends": backends}, 202)
+
     def do_POST(self):
         global PROCESS, LAST_REQUEST_STATE, LAST_REQUEST_ERROR
+        if self.path == "/sweep":
+            self.start_sweep()
+            return
         if self.path != "/run":
             self.send_error(404)
             return
@@ -315,12 +466,20 @@ class Handler(BaseHTTPRequestHandler):
             if PROCESS is not None and PROCESS.poll() is None:
                 json_response(self, {"error": "A simulation is already running."}, 409)
                 return
+            if SWEEP_PROCESS is not None and SWEEP_PROCESS.poll() is None:
+                json_response(self, {"error": "Wait for the scaling sweep to finish."}, 409)
+                return
+        if backend not in BACKENDS:
+            json_response(self, {"error": "Unknown backend."}, 400)
+            return
         capability = CAPABILITIES.get(backend)
         if (capability is None or capability.get("status") != "AVAILABLE" or
                 (backend == "mpi" and not MPI_LAUNCHER)):
             with LOCK:
                 LAST_REQUEST_STATE = "UNAVAILABLE"
-                LAST_REQUEST_ERROR = "Backend unavailable in current environment."
+                LAST_REQUEST_ERROR = (
+                    f"{backend.upper()} backend unavailable on this machine: "
+                    + str((capability or {}).get("detail", "not built")))
             json_response(self, {"error": LAST_REQUEST_ERROR}, 409)
             return
         try:
@@ -340,8 +499,13 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError("Grid dimensions must be between 8 and 1024.")
             if not 0.01 <= duration <= 600:
                 raise ValueError("Duration must be between 0.01 and 600 seconds.")
-            if threads not in (1, 2, 4) or processes not in (1, 2, 4):
-                raise ValueError("Threads and MPI ranks must be 1, 2, or 4.")
+            if threads not in (1, 2, 4, 8) or processes not in (1, 2, 4):
+                raise ValueError("Threads must be 1, 2, 4 or 8 and MPI ranks 1, 2 or 4.")
+            if adaptive and backend not in ADAPTIVE_BACKENDS:
+                raise ValueError("Adaptive mesh runs support the Serial, OpenMP and MPI backends.")
+            if adaptive and scenario in RAINY_SCENARIOS:
+                raise ValueError("Rain wets every cell in this scenario, so adaptive refinement would "
+                                 "refine the whole domain; use the uniform solver.")
             if max_level not in (0, 1, 2) or patch_extent not in (4, 8, 16):
                 raise ValueError("Adaptive level or patch extent is unsupported.")
             if regrid_interval < 1 or not 0 <= coarsen_threshold < refine_threshold:
@@ -350,12 +514,14 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError("MPI imbalance threshold or cooldown is invalid.")
             if dynamic_load_balancing and (not adaptive or backend != "mpi"):
                 raise ValueError("Dynamic load balancing requires adaptive MPI.")
+            solver_args = scenario_arguments(form, scenario)
         except ValueError as error:
             json_response(self, {"error": str(error)}, 400)
             return
 
         command = [
             sys.executable, str(ROOT / "scripts" / "run_ui_comparison.py"),
+            "--solver-args", shlex.join(solver_args),
             "--binary", str(SOLVER_BINARY),
             "--adaptive-binary", str(ADAPTIVE_BINARY),
             "--scenario", scenario, "--rows", str(rows), "--cols", str(cols),
@@ -367,7 +533,10 @@ class Handler(BaseHTTPRequestHandler):
             "--imbalance-threshold", str(imbalance_threshold),
             "--rebalance-cooldown", str(rebalance_cooldown),
             "--output", str(RUN_DIR),
+            "--reference-threads", "4",
         ]
+        if value("reference", "true") != "true":
+            command.append("--no-reference")
         if adaptive:
             command.extend((
                 "--adaptive", "--patch-extent", str(patch_extent),
@@ -402,6 +571,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
+    threading.Thread(target=ensure_showcase, daemon=True).start()
     address = ("127.0.0.1", 8000)
     print(f"Adaptive Flood UI: http://{address[0]}:{address[1]}")
     ThreadingHTTPServer(address, Handler).serve_forever()

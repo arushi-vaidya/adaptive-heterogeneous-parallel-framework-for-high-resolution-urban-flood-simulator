@@ -18,6 +18,7 @@ struct SolverConfig {
     double cfl = 0.4;
     double maxTimestep = 10.0;
     double endTime = 60.0;
+    double startTime = 0.0; // lets a run continue from an earlier segment
     BoundaryCondition boundary = BoundaryCondition::Closed;
 };
 
